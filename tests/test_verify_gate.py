@@ -25,7 +25,7 @@ CLAIM = "The MEMORY.md contains a synthetic assertion."
 def _scenario(mode):
     from agent.turn_finalizer import apply_llm_output_transform
     from hermes_cli.plugins import discover_plugins, get_plugin_manager
-    from model_tools import handle_function_call
+    from model_tools import _emit_post_tool_call_hook, handle_function_call
 
     home = Path(os.environ["HERMES_HOME"])
     logging.getLogger().setLevel(logging.INFO)
@@ -54,6 +54,21 @@ def _scenario(mode):
         return call("patch", session=session, old_string="Original memory line.",
                     new_string="Patched memory line.")
 
+    if mode == "one-shot":
+        callback = manager.iter_hook_callbacks("pre_tool_call")[0]
+        module = sys.modules[callback.__module__.split(".guards.", 1)[0]]
+        connecting = threading.Event()
+        release = threading.Event()
+
+        def stalled_connection(_url):
+            connecting.set()
+            release.wait()
+
+        with patch.object(module, "_connect", side_effect=stalled_connection):
+            changed = change()
+            assert connecting.wait(timeout=5), "the decision did not reach its persistence worker"
+        return {"changed": changed}
+
     result = {"held": bool(manager.held_transforms()), "reply": reply("first")}
     result["first_write"] = change()
     result["unchanged"] = path.read_text(encoding="utf-8") == original
@@ -79,11 +94,16 @@ def _scenario(mode):
     with patch.object(PluginContext, "state", new_callable=PropertyMock, side_effect=ValueError(CLAIM)):
         result["crash_write"] = change("third")
         result["crash_reply"] = reply("third")
-    def terminal_hook(command, *, workdir=home, status=None):
-        hook = "post_tool_call" if status else "pre_tool_call"
+    def terminal_hook(command, *, workdir=home, completed=None):
+        args = {"command": command, "workdir": str(workdir)}
+        if completed is not None:
+            _emit_post_tool_call_hook(
+                function_name="terminal", function_args=args, result=json.dumps(completed),
+                task_id="verify", session_id="terminal",
+            )
+            return None
         return manager.invoke_hook(
-            hook, tool_name="terminal", args={"command": command, "workdir": str(workdir)},
-            session_id="terminal", task_id="verify", status=status,
+            "pre_tool_call", tool_name="terminal", args=args, session_id="terminal", task_id="verify",
         )
 
     result["terminal_unread"] = terminal_hook("touch .env")
@@ -92,12 +112,24 @@ def _scenario(mode):
     result["terminal_parent_relative"] = terminal_hook("touch ../.env", workdir=path.parent)
     result["terminal_stdout"] = terminal_hook("printf test 1>.env")
     result["terminal_combined_stdout"] = terminal_hook("printf test &>.env")
-    terminal_hook("printf test 1>.env", status="ok")
+    foreground = {"output": "synthetic fixture", "exit_code": 0, "error": None}
+    terminal_hook("printf test 1>.env", completed=foreground)
     result["write_after_redirect"] = terminal_hook("touch .env")
+    terminal_hook("cat .env", completed={**foreground, "exit_code": None, "status": "yielded_to_background",
+                                         "session_id": "synthetic-process"})
+    result["write_after_yield"] = terminal_hook("touch .env")
+    terminal_hook("cat .env", completed={**foreground, "session_id": "synthetic-process"})
+    result["write_after_background_start"] = terminal_hook("touch .env")
+    terminal_hook('cd "$HERMES_HOME" && cd memories && cat .env', workdir=home.parent, completed=foreground)
+    result["write_after_ambiguous_cwd"] = terminal_hook("touch .env")
+    terminal_hook('cd "$HERMES_HOME" && cat .env', workdir=home.parent, completed=foreground)
+    result["write_after_foreground"] = terminal_hook("touch .env")
     result["setting_unread"] = terminal_hook('hermes config set "memory.provider" custom_build')
-    terminal_hook("hermes config get memory.provider", status="error")
+    terminal_hook("hermes config get memory.provider", completed={**foreground, "exit_code": 1, "error": "failed"})
     result["setting_failed_read"] = terminal_hook("hermes config unset memory.provider")
-    terminal_hook("hermes config get 'memory.provider'", status="ok")
+    terminal_hook("hermes config show", completed={**foreground, "output": "compression.in_place = true"})
+    result["setting_after_show_summary"] = terminal_hook("hermes config unset memory.provider")
+    terminal_hook("hermes config get 'memory.provider'", completed=foreground)
     result["setting_read"] = terminal_hook("hermes config set memory.provider custom_build")
     return result
 
@@ -110,7 +142,8 @@ class VerifyGateTests(unittest.TestCase):
             shutil.copytree(PLUGIN, plugin)
             config = plugin / GATE_CONFIG
             if config.exists():
-                settings = config.read_text(encoding="utf-8").replace('mode = "log"', f'mode = "{mode}"')
+                profile_mode = "log" if mode == "one-shot" else mode
+                settings = config.read_text(encoding="utf-8").replace('mode = "log"', f'mode = "{profile_mode}"')
                 config.write_text(settings, encoding="utf-8")
             (home / "config.yaml").write_text("plugins:\n  enabled: [custom_build]\n", encoding="utf-8")
             env = {"HOME": scratch, "HERMES_HOME": scratch, "PATH": os.defpath}
@@ -149,10 +182,13 @@ class VerifyGateTests(unittest.TestCase):
     def test_terminal_gate_respects_managed_paths_and_setting_receipts(self):
         result, _ = self._run("on")
         for case in ("terminal_unread", "terminal_cd", "terminal_parent_relative", "terminal_stdout",
-                     "terminal_combined_stdout", "write_after_redirect", "setting_unread", "setting_failed_read"):
+                     "terminal_combined_stdout", "write_after_redirect", "write_after_yield",
+                     "write_after_background_start", "write_after_ambiguous_cwd", "setting_unread",
+                     "setting_failed_read", "setting_after_show_summary"):
             with self.subTest(case=case):
                 self.assertEqual([item["action"] for item in result[case]], ["block"])
         self.assertEqual(result["terminal_other_path"], [])
+        self.assertEqual(result["write_after_foreground"], [])
         self.assertEqual(result["setting_read"], [])
 
     def test_log_mode_records_while_off_mode_does_not(self):
@@ -167,6 +203,11 @@ class VerifyGateTests(unittest.TestCase):
         self.assertIn("events.write_failed", log)
         self.assertNotIn(CLAIM, log)
         self.assertNotIn("verify_gate.", off_log)
+
+    def test_guard_decision_is_logged_before_a_one_shot_process_can_exit(self):
+        result, log = self._run("one-shot", "dbname=disposable")
+        self.assertTrue(result["changed"]["success"])
+        self.assertIn("verify_gate.would_block", log)
 
     @unittest.skipUnless(os.environ.get("CHA_FINAL_TEST_DATABASE_URL"), "requires disposable PostgreSQL")
     def test_decision_events_reach_the_existing_store(self):
@@ -186,7 +227,8 @@ class VerifyGateTests(unittest.TestCase):
 
 if __name__ == "__main__":
     outcome = _scenario(sys.argv[1])
-    for worker in threading.enumerate():
-        if worker.name == "cha-final-verify-event":
-            worker.join(timeout=5)
+    if sys.argv[1] != "one-shot":
+        for worker in threading.enumerate():
+            if worker.name == "cha-final-verify-event":
+                worker.join(timeout=5)
     print(json.dumps(outcome))
