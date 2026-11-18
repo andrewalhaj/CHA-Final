@@ -464,6 +464,8 @@ the lookup rules. The `on` mode adds a reminder and holds the reply until the fi
 mode registers no hooks. Terminal lookups need a foreground exit code of zero, a delegated lookup needs
 a completed result, and a web extraction needs at least one returned page with content. Receipts match
 Hermes's turn ID in memory, so compression can rotate the session ID while the receipt still counts.
+Hermes sends `on_session_end` with a turn ID after finalization, including for empty or interrupted turns.
+The gate retires only that turn's receipt state when this hook runs.
 The current event table stores the rule and decision without turn IDs or conversation text.
 In Hermes v0.23.1, turning on either gate holds the stream and captures all registered output transforms.
 Hermes runs each captured transform and uses the first replacement. With fact `on` and verify `log`,

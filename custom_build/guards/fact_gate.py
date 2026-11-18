@@ -111,6 +111,13 @@ def register(ctx, record_event):
         record_event(code, "ok", reason=f"{rule}: missing {requirement}")
         return f"Fact gate withheld the reply. It needs a {requirement} in this turn." if enforce else None
 
+    @failures.boundary(lambda code: None, on_error=crash)
+    def retire(*, turn_id="", **kwargs):
+        # Hermes finalizes blank and interrupted turns without calling the output transform.
+        with lock:
+            turns.pop(turn_id, None)
+
     ctx.register_hook("pre_llm_call", arm)
     ctx.register_hook("post_tool_call", count)
     ctx.register_hook("transform_llm_output", check, hold_stream=enforce)
+    ctx.register_hook("on_session_end", retire)
