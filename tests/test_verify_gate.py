@@ -79,6 +79,22 @@ def _scenario(mode):
     with patch.object(PluginContext, "state", new_callable=PropertyMock, side_effect=ValueError(CLAIM)):
         result["crash_write"] = change("third")
         result["crash_reply"] = reply("third")
+    def terminal_hook(command, *, workdir=home, status=None):
+        hook = "post_tool_call" if status else "pre_tool_call"
+        return manager.invoke_hook(
+            hook, tool_name="terminal", args={"command": command, "workdir": str(workdir)},
+            session_id="terminal", task_id="verify", status=status,
+        )
+
+    result["terminal_unread"] = terminal_hook("touch .env")
+    result["terminal_other_path"] = terminal_hook("touch .env.bak")
+    result["terminal_cd"] = terminal_hook('cd "$HERMES_HOME" && touch .env', workdir=home.parent)
+    result["terminal_parent_relative"] = terminal_hook("touch ../.env", workdir=path.parent)
+    result["setting_unread"] = terminal_hook("hermes config set memory.provider custom_build")
+    terminal_hook("hermes config get memory.provider", status="error")
+    result["setting_failed_read"] = terminal_hook("hermes config unset memory.provider")
+    terminal_hook("hermes config get memory.provider", status="ok")
+    result["setting_read"] = terminal_hook("hermes config set memory.provider custom_build")
     return result
 
 
@@ -125,6 +141,15 @@ class VerifyGateTests(unittest.TestCase):
         self.assertIn("guard.crash", result["crash_reply"])
         self.assertIn("guard.crash", log)
         self.assertNotIn(CLAIM, log)
+
+    def test_terminal_gate_respects_managed_paths_and_setting_receipts(self):
+        result, _ = self._run("on")
+        for case in ("terminal_unread", "terminal_cd", "terminal_parent_relative", "setting_unread",
+                     "setting_failed_read"):
+            with self.subTest(case=case):
+                self.assertEqual([item["action"] for item in result[case]], ["block"])
+        self.assertEqual(result["terminal_other_path"], [])
+        self.assertEqual(result["setting_read"], [])
 
     def test_log_mode_records_while_off_mode_does_not(self):
         logged, log = self._run("log")
