@@ -18,6 +18,15 @@ class BootstrapTests(unittest.TestCase):
                 self.assertTrue((ROOT / filename).is_file(), f"{filename} is missing")
                 self.assertIn(f"]({filename})", readme)
 
+    def test_agent_instructions_link_to_the_governing_guides(self):
+        instructions = ROOT / "AGENTS.md"
+        self.assertTrue(instructions.is_file(), "The root AGENTS.md is missing")
+        text = instructions.read_text(encoding="utf-8")
+        for filename in GUIDES:
+            with self.subTest(filename=filename):
+                self.assertIn(f"]({filename})", text)
+                self.assertTrue((ROOT / filename).is_file())
+
     def test_allow_list_exposes_the_guides_and_hides_local_secrets(self):
         def ignore_status(filename):
             return subprocess.run(
