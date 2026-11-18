@@ -1,21 +1,24 @@
-"""Exercise the first memory schema on a fresh disposable PostgreSQL database."""
+"""Exercise the memory schemas on a fresh disposable PostgreSQL database."""
 
 import os
 import unittest
 from pathlib import Path
 
-MIGRATION = Path(__file__).resolve().parents[1] / "migrations" / "0001_bootstrap.sql"
+MIGRATIONS = Path(__file__).resolve().parents[1] / "migrations"
 TEST_DATABASE_URL = os.environ.get("CHA_FINAL_TEST_DATABASE_URL")
 
 
 @unittest.skipUnless(TEST_DATABASE_URL, "set CHA_FINAL_TEST_DATABASE_URL to a fresh disposable database")
 class ExplicitStoreTests(unittest.TestCase):
-    def test_save_and_lexically_recall_across_connections(self):
+    @classmethod
+    def setUpClass(cls):
         import psycopg
 
-        self.assertTrue(MIGRATION.is_file(), "the first store migration is missing")
         with psycopg.connect(TEST_DATABASE_URL) as conn:
-            conn.execute(MIGRATION.read_text(encoding="utf-8"))
+            conn.execute((MIGRATIONS / "0001_bootstrap.sql").read_text(encoding="utf-8"))
+
+    def test_save_and_lexically_recall_across_connections(self):
+        import psycopg
 
         from custom_build.memory.store import recall, save
 
@@ -42,3 +45,43 @@ class ExplicitStoreTests(unittest.TestCase):
 
         with self.assertRaises(psycopg.OperationalError):
             recall(conn, "brass compass")
+
+    def test_scoped_facts_are_isolated_from_other_scopes_and_the_old_runtime(self):
+        import psycopg
+
+        from custom_build.memory.store import recall, save
+
+        legacy_insert = "insert into cha_final.facts (body) values (%s) returning id"
+        legacy_recall = (
+            "select body from cha_final.facts "
+            "where to_tsvector('english', body) @@ plainto_tsquery('english', %s) "
+            "order by id desc limit 8"
+        )
+        before = "Project scope before the migration"
+        after = "Project scope after the migration"
+        projectless = "Project scope without a project"
+        oak = "Project scope for oak"
+        birch = "Project scope for birch"
+
+        with psycopg.connect(TEST_DATABASE_URL) as conn:
+            before_id, = conn.execute(legacy_insert, (before,)).fetchone()
+            project_migration = MIGRATIONS / "0002_project_facts.sql"
+            self.assertTrue(project_migration.is_file(), "the project facts migration is missing")
+            conn.execute(project_migration.read_text(encoding="utf-8"))
+            oak_id = save(conn, oak, project="oak")
+            after_id, = conn.execute(legacy_insert, (after,)).fetchone()
+            birch_id = save(conn, birch, project="birch")
+            projectless_id = save(conn, projectless, project=None)
+
+        ids = [before_id, oak_id, after_id, birch_id, projectless_id]
+        self.assertEqual(ids, sorted(set(ids)))
+        with psycopg.connect(TEST_DATABASE_URL) as conn:
+            query = "project scope"
+            self.assertEqual(recall(conn, query, project="oak"), [oak])
+            self.assertEqual(recall(conn, query, project="birch"), [birch])
+            self.assertEqual(recall(conn, query, project="fir"), [])
+            self.assertEqual(recall(conn, query, project=None), [projectless, after, before])
+            self.assertEqual(
+                list(conn.execute(legacy_recall, (query,))),
+                [(projectless,), (after,), (before,)],
+            )
