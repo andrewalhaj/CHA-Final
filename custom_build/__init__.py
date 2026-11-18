@@ -17,6 +17,7 @@ from .memory import project, store
 SOURCE = "custom_build"
 RECALL_TIMEOUT = 6.0
 _RECALL_SLOTS = threading.BoundedSemaphore(4)
+_GUARD_EVENT_SLOTS = threading.BoundedSemaphore(3)
 _CONNECT_TIMEOUT = 2
 _STATEMENT_OPTIONS = "-c statement_timeout=3000"
 REDACTION_PATTERNS = (r"sb_secret_[A-Za-z0-9_-]{20,}", r"sb_publishable_[A-Za-z0-9_-]{20,}")
@@ -81,9 +82,7 @@ class CustomBuildProvider(MemoryProvider):
         return [_STORE_FACT]
 
     def _connect(self):
-        return psycopg.connect(
-            self._database_url, autocommit=True, connect_timeout=_CONNECT_TIMEOUT, options=_STATEMENT_OPTIONS,
-        )
+        return _connect(self._database_url)
 
     def _reject_fact(self, code: str) -> str:
         connection = None
@@ -188,12 +187,48 @@ class CustomBuildProvider(MemoryProvider):
         return _recall_note("recall.timeout")
 
 
+def _connect(database_url):
+    return psycopg.connect(
+        database_url, autocommit=True, connect_timeout=_CONNECT_TIMEOUT, options=_STATEMENT_OPTIONS,
+    )
+
+
+def _record_guard_event(code, result, **fields):
+    """Log the decision and record it without keeping a Hermes hook waiting on the store."""
+    database_url = get_secret("CHA_FINAL_DATABASE_URL")
+    if not database_url or not _GUARD_EVENT_SLOTS.acquire(blocking=False):
+        failures.record(None, code, result, source=SOURCE, **fields)
+        return
+
+    @failures.boundary(lambda code: None)
+    def write():
+        try:
+            try:
+                connection = _connect(database_url)
+            except (psycopg.OperationalError, psycopg.ProgrammingError):
+                failures.record(None, code, result, source=SOURCE, **fields)
+                return
+            with connection:
+                failures.record(connection, code, result, source=SOURCE, **fields)
+        finally:
+            _GUARD_EVENT_SLOTS.release()
+
+    try:
+        spawn_context_thread(write, name="cha-final-verify-event").start()
+    except RuntimeError:
+        _GUARD_EVENT_SLOTS.release()
+        failures.record(None, code, result, source=SOURCE, **fields)
+
+
 def register(ctx) -> None:
     ctx.register_redaction_patterns(REDACTION_PATTERNS)
     # The provider collector has no state property. Avoid creating state during ordinary discovery.
     if not hasattr(type(ctx), "state"):
         ctx.register_memory_provider(CustomBuildProvider())
-    else:
-        from . import heartbeat
+        return
 
-        heartbeat.register(ctx)
+    from . import heartbeat
+    from .guards import verify_gate
+
+    heartbeat.register(ctx)
+    verify_gate.register(ctx, _record_guard_event)
