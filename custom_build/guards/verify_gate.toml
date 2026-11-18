@@ -1,0 +1,34 @@
+# Start in log mode (ARCHITECTURE.md §5.4). "on" enforces; "off" registers no hooks.
+mode = "log"
+
+# Settings listed in OPERATIONS.md §3 items 3 and 4.
+settings = [
+    "plugins.entries.custom_build.settings.machine_name",
+    "plugins.entries.custom_build.settings.judge_model",
+    "memory.provider",
+    "skills.write_approval",
+    "memory.write_approval",
+    "compression.in_place",
+    "logging.max_size_mb",
+    "logging.backup_count",
+    "security.redact_secrets",
+    "gateway.auto_multiplex_migration",
+    "plugins.isolation",
+    "approvals.mode",
+    "plugins.hook_callback_timeout",
+    "approvals.cron_mode",
+    "approvals.single_query_mode",
+    "approvals.unattended_mode",
+]
+
+# Terminal detection is by pattern. A command that names and writes files counts them all as changes.
+writes = '''(?<![0-9&])(?:1|&)?>>?|\btee\b|\bsed\s+(?:-\w+\s+)*-i|\bperl\s+-\w*i|\b(?:cp|mv|rm|ln|truncate|chmod|chown|install|touch|dd)\b'''
+contents = '''\b(?:contains?|is set to|says|reads|currently)\b'''
+
+# Paths are relative to the active Hermes profile.
+[files]
+config = "config.yaml"
+env = ".env"
+plugin = "plugins/custom_build"
+memory = "memories/MEMORY.md"
+user = "memories/USER.md"

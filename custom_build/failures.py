@@ -5,6 +5,7 @@ import logging
 from functools import wraps
 from traceback import walk_tb
 
+from agent.redact import redact_sensitive_text
 from psycopg import Connection, OperationalError
 from psycopg.errors import (
     InFailedSqlTransaction,
@@ -27,6 +28,11 @@ REASONS = {
     "legacy.source_invalid": "The legacy snapshot contains an unresolved project association.",
     "legacy.target_conflict": "The target already contains facts or a different legacy snapshot.",
     "host.heartbeat": "The agent host recorded a heartbeat.",
+    "guard.crash": "An unexpected guard failure occurred.",
+    "verify_gate.blocked": "An unread managed change was blocked.",
+    "verify_gate.withheld": "An unread managed claim was withheld.",
+    "verify_gate.would_block": "A managed change lacked a successful read.",
+    "verify_gate.would_withhold": "A managed claim lacked a successful read.",
     "unhandled": "An unexpected memory failure occurred.",
     "events.write_failed": "The failure event could not be written to the store.",
 }
@@ -50,8 +56,10 @@ def record(
     *,
     source: str,
     diagnostic: Exception | None = None,
-) -> bool:
-    """Log and attempt an insert, returning whether it succeeded.
+    reason: str | None = None,
+    defer_write=None,
+) -> bool | None:
+    """Log first, then insert and return its success, or schedule the same insert and return None.
 
     The caller supplies a configured source label and owns the transaction.
     """
@@ -60,7 +68,7 @@ def record(
     if result not in ("ok", "failed", "degraded"):
         raise ValueError("Unknown failure result")
 
-    reason = REASONS[code]
+    reason = redact_sensitive_text(reason, force=True)[:200] if reason else REASONS[code]
     fields = {
         "source": source,
         "code": code,
@@ -74,11 +82,18 @@ def record(
             for frame, line in walk_tb(diagnostic.__traceback__)
         ]
     logger.log(logging.INFO if result == "ok" else logging.WARNING, "%s", json.dumps(fields))
+    values = (source, code, result, reason)
+    if defer_write is not None:
+        defer_write(lambda connection: _persist(connection, values))
+        return None
+    return _persist(conn, values)
+
+
+def _persist(conn, values):
+    source, code, _, _ = values
     if conn is None:
         return _write_failed(source, code)
-
     statement = "INSERT INTO cha_final.events (source, code, result, reason) VALUES (%s, %s, %s, %s)"
-    values = (source, code, result, reason)
     try:
         conn.execute(statement, values)
     except (OperationalError, InFailedSqlTransaction, InsufficientPrivilege, ReadOnlySqlTransaction):
@@ -86,7 +101,7 @@ def record(
     return True
 
 
-def boundary(failure_result):
+def boundary(failure_result, *, on_error=None):
     """Expose a fixed result when Hermes would swallow or expose an unexpected exception."""
     def decorate(method):
         @wraps(method)
@@ -98,11 +113,16 @@ def boundary(failure_result):
                     # The original cause stays inside this wrapper, where it is inspected without its message.
                     raise _BoundaryFailure from error
             except _BoundaryFailure as failure:
-                record(
-                    kwargs.get("connection"), "unhandled", "failed",
-                    source="custom_build", diagnostic=failure.__cause__,
-                )
-                return failure_result("unhandled")
+                if on_error is None:
+                    code = "unhandled"
+                    record(
+                        kwargs.get("connection"), code, "failed",
+                        source="custom_build", diagnostic=failure.__cause__,
+                    )
+                else:
+                    code = "guard.crash"
+                    on_error(code, failure.__cause__)
+                return failure_result(code)
 
         return call
 

@@ -2,5 +2,9 @@ name: custom_build
 version: 0.1.0
 kind: standalone
 description: Save explicit facts and recall them from PostgreSQL.
+provides_hooks:
+  - pre_tool_call
+  - post_tool_call
+  - transform_llm_output
 python_dependencies:
   - "psycopg[binary]==3.3.9"
