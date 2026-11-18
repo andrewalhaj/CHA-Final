@@ -20,6 +20,7 @@ REASONS = {
     "db.unreachable": "The memory store could not be reached.",
     "embed.unavailable": "The local embedding service could not give a usable response.",
     "embed.model_mismatch": "The local embedding service returned a different model or vector size.",
+    "recall.invalid": "An explicit memory query must be nonempty text.",
     "recall.timeout": "The memory search exceeded its deadline.",
     "store.invalid": "An explicit fact must be nonempty text.",
     "store.read_only": "Only the primary Hermes session can store an explicit fact.",

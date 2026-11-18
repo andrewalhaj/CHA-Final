@@ -58,15 +58,26 @@ def _scenario(mode, workspace_actions=None):
         def prefetch(query):
             return manager.prefetch_all(query, session_id=session_id)
 
+        def search(query):
+            assert manager.has_tool("memory_search"), "Hermes did not register the memory_search tool"
+            return json.loads(manager.handle_tool_call("memory_search", {"query": query}, session_id=session_id))
+
+        if mode == "search-outage":
+            return {"search": search(PROJECT_QUERY)}
         if workspace_actions is not None:
             outcomes = []
             # Scope each call after initialization so an initial or cached project cannot pass.
             for workspace, fact in json.loads(workspace_actions):
                 cwd_token = set_session_cwd(workspace)
                 try:
-                    outcomes.append(prefetch(PROJECT_QUERY) if fact is None else store_fact(fact))
+                    if mode == "scoped-tool-search":
+                        outcomes.append(search(PROJECT_QUERY))
+                    else:
+                        outcomes.append(prefetch(PROJECT_QUERY) if fact is None else store_fact(fact))
                 finally:
                     reset_session_cwd(cwd_token)
+            if mode == "scoped-tool-search":
+                return {"outcomes": outcomes, "empty": search("elephants"), "invalid": search(" ")}
             return {"outcomes": outcomes}
 
         if mode == "write":
@@ -183,6 +194,16 @@ class HermesExplicitMemoryTests(unittest.TestCase):
                     self.assertEqual(failure["tool"].get("error"), code)
                     self.assertIn(code, log)
 
+    def test_search_outage_is_distinct_from_empty(self):
+        from psycopg.conninfo import make_conninfo
+
+        with tempfile.TemporaryDirectory(prefix="cha-search-outage-") as scratch_dir:
+            scratch = Path(scratch_dir)
+            dead_url = make_conninfo(host=str(scratch / "absent-socket"), dbname="cha_hermes")
+            result, log = self._run(scratch, "search-outage", dead_url)
+            self.assertEqual(result["search"], {"error": "db.unreachable"})
+            self.assertIn("db.unreachable", log)
+
     def test_project_recall_is_exclusive_across_origins(self):
         with tempfile.TemporaryDirectory(prefix="cha-projects-") as scratch_dir, self._database() as database_url:
             scratch = Path(scratch_dir)
@@ -222,6 +243,12 @@ class HermesExplicitMemoryTests(unittest.TestCase):
                 with self.subTest(workspace=workspace.name):
                     self.assertTrue(note.startswith("Recalled notes"), note)
                     self.assertEqual([fact for fact in possible_facts if fact in note], [expected])
+
+            tool, _ = self._run(scratch, "scoped-tool-search", database_url,
+                                workspace_actions=[(str(workspace), None) for workspace, _ in reads])
+            self.assertEqual(tool["outcomes"], [{"matches": [expected]} for _, expected in reads])
+            self.assertEqual(tool["empty"], {"matches": []})
+            self.assertEqual(tool["invalid"], {"error": "recall.invalid"})
 
 
 if __name__ == "__main__":

@@ -179,3 +179,61 @@ class ProviderBoundaryTests(unittest.TestCase):
         self.assertEqual(json.loads(response), {"error": "unhandled"})
         self.assertIn("unhandled", note)
         self.assertNotIn("Another workspace's fact.", note)
+
+    def test_invalid_search_logs_and_returns_while_event_database_connects(self):
+        import custom_build
+
+        provider = custom_build.CustomBuildProvider()
+        provider._database_url = _TEST_DSN
+        connection = MagicMock()
+        connection.__enter__.return_value = connection
+        started = threading.Event()
+        release = threading.Event()
+        persisted = threading.Event()
+        result = []
+        connection.execute.side_effect = lambda *_args: persisted.set()
+
+        def stalled_connect(*_args, **_kwargs):
+            started.set()
+            release.wait(timeout=5)
+            return connection
+
+        caller = threading.Thread(
+            target=lambda: result.append(provider.handle_tool_call("memory_search", {"query": " "})),
+            daemon=True,
+        )
+        with (
+            patch.object(custom_build, "get_secret", return_value=_TEST_DSN),
+            patch("psycopg.connect", side_effect=stalled_connect),
+            self.assertLogs(custom_build.failures.__name__, level="WARNING") as logs,
+        ):
+            try:
+                caller.start()
+                self.assertTrue(started.wait(timeout=2))
+                caller.join(timeout=0.5)
+                self.assertFalse(caller.is_alive(), "invalid query waited for the event store")
+                self.assertEqual([json.loads(response) for response in result], [{"error": "recall.invalid"}])
+                self.assertIn("recall.invalid", "\n".join(logs.output))
+            finally:
+                release.set()
+                caller.join(timeout=2)
+                self.assertTrue(persisted.wait(timeout=2))
+
+    def test_nontext_database_matches_report_a_named_failure_to_both_callers(self):
+        import custom_build
+
+        provider = custom_build.CustomBuildProvider()
+        provider._database_url = _TEST_DSN
+        connection = MagicMock()
+        connection.__enter__.return_value = connection
+        with (
+            patch("psycopg.connect", return_value=connection),
+            patch.object(custom_build.store, "recall", return_value=[b"private undecoded body"]),
+            self.assertLogs(custom_build.failures.__name__, level="WARNING") as logs,
+        ):
+            self.assertEqual(provider.prefetch("brass compass"), "[Memory recall failed: unhandled]")
+            response = provider.handle_tool_call("memory_search", {"query": "brass compass"})
+
+        self.assertEqual(json.loads(response), {"error": "unhandled"})
+        self.assertEqual(connection.execute.call_count, 2)
+        self.assertNotIn("private undecoded body", "\n".join(logs.output))
