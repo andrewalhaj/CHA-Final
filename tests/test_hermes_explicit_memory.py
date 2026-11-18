@@ -96,6 +96,9 @@ class HermesExplicitMemoryTests(unittest.TestCase):
         if database_url:
             (home / ".env").write_text(f"CHA_FINAL_DATABASE_URL={json.dumps(database_url)}\n", encoding="utf-8")
 
+        return self._run_installed(scratch, home, mode, workspace_actions=workspace_actions)
+
+    def _run_installed(self, scratch, home, mode, *, workspace_actions=None):
         # Keep the process registry, dotenv and profile files separate from the test runner and host.
         command = [sys.executable, "-B", __file__, mode]
         if workspace_actions is not None:
@@ -120,7 +123,7 @@ class HermesExplicitMemoryTests(unittest.TestCase):
         return json.loads(completed.stdout.splitlines()[-1]), completed.stderr
 
     @contextmanager
-    def _database(self):
+    def _database(self, migrations=MIGRATIONS):
         import psycopg
         from psycopg import sql
         from psycopg.conninfo import make_conninfo
@@ -134,7 +137,7 @@ class HermesExplicitMemoryTests(unittest.TestCase):
             try:
                 self.assertTrue(MIGRATIONS, "the database migrations are missing")
                 with psycopg.connect(database_url) as conn:
-                    for migration in MIGRATIONS:
+                    for migration in migrations:
                         conn.execute(migration.read_text(encoding="utf-8"))
                 yield database_url
             finally:
