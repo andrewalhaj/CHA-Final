@@ -107,6 +107,7 @@ class ProviderBoundaryTests(unittest.TestCase):
                 reset_secret_scope(token)
 
         save.assert_not_called()
+        self.assertIn("error", json.loads(response))
 
     def test_malformed_database_setting_is_reported_before_connecting(self):
         import psycopg
@@ -126,4 +127,3 @@ class ProviderBoundaryTests(unittest.TestCase):
         connect.assert_not_called()
         self.assertIn("config.missing", note)
         self.assertNotIn("synthetic invalid connection setting", "\n".join(logs.output))
-        self.assertIn("error", json.loads(response))
