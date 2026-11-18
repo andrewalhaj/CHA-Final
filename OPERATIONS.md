@@ -6,6 +6,16 @@ Facts about Hermes are stated for **Hermes v0.23.1**. Re-check them before upgra
 
 **CHA Final status.** Sections 1–8 preserve the deployment reference from [the previous Hermes repository](https://github.com/andrewalhaj/Custom-Hermes-Agent-Final). Bare issue numbers refer to that project. CHA Final has no deployment at bootstrap. Use disposable infrastructure for the first milestone and rehearse migration and rollback there before connecting this rebuild to the shared store.
 
+## Legacy memory rehearsal
+
+Use two disposable PostgreSQL databases. Restore a fixed copy of the old `memory.facts` into the source. Apply all CHA Final migrations to an empty destination. Set `CHA_FINAL_LEGACY_DATABASE_URL` to the source connection string and `CHA_FINAL_DATABASE_URL` to the destination connection string through the operator's private environment. Use a source account with read access only. Keep connection strings and the project map out of Git.
+
+Prepare a JSON object mapping each used legacy project label to the network origin that should own it in CHA Final. For example, `{"git.example/team/project":"https://git.example/team/project.git"}`. Review each association against the source snapshot. If an old key combined multiple repositories, resolve that ambiguity before import. A fact with a missing mapping stops the import. Genuinely unscoped facts remain unscoped.
+
+Run `python -m scripts.import_legacy --project-map <file>` from the repo with the pinned Hermes environment. This reads the source in a read-only transaction and reports the number of eligible facts without opening the destination. Keep the source snapshot and reviewed mappings fixed. To write to the empty disposable destination, rerun with `--apply`. A repeat of that snapshot imports zero rows. A different snapshot or an initially nonempty destination is refused.
+
+The rehearsal carries over the current body and resolved project of a live fact in legacy creation order. The importer redacts each fact body before writing it. Retired and superseded facts and session digests are excluded. Vectors, event history, and session metadata are outside this importer. Verify recall from the matching workspace and from a separate workspace. A production snapshot and cutover require their own verification.
+
 ## 1. Deployment values
 
 These placeholders appear in the documentation. Each deployment sets them in its Hermes profile's `.env` or its own configuration management, never in this repository.
