@@ -27,9 +27,14 @@ def reply(body, *, status=200, location=None):
 
 class LocalEmbeddingTests(unittest.TestCase):
     def assert_failure(self, operation, response, code):
-        kwargs = {"side_effect": response} if isinstance(response, BaseException) else {"return_value": response}
+        def send(request, **_):
+            if isinstance(response, requests.RequestException):
+                raise response
+            response.request = request
+            return response
+
         with (
-            patch.object(requests.adapters.HTTPAdapter, "send", **kwargs) as sent,
+            patch.object(requests.adapters.HTTPAdapter, "send", side_effect=send) as sent,
             self.assertLogs("custom_build.failures", level="WARNING") as logs,
             self.assertRaises(embedding.EmbeddingError) as caught,
         ):
