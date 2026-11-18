@@ -45,5 +45,5 @@ def read_snapshot(conn: Connection, project_origins: dict[str, str]) -> list[tup
                 raise LegacySourceError("Distinct legacy projects map to the same project key")
             keys[label] = key
             used.add(key)
-        facts.append((fact_id, redact_sensitive_text(body, force=True), keys[label]))
+        facts.append((fact_id, redact_sensitive_text(body, force=True, redact_url_credentials=True), keys[label]))
     return facts
