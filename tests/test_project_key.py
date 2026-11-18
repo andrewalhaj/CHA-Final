@@ -32,30 +32,63 @@ class ProjectKeyTests(unittest.TestCase):
         self.git(path, "init", "-q")
         return path
 
-    def test_common_network_aliases_share_a_digest_from_a_subdirectory(self):
+    def test_public_forge_aliases_share_a_digest_from_a_subdirectory(self):
         repo = self.repo("work")
         subdirectory = repo / "nested"
         subdirectory.mkdir()
-        expected = hashlib.sha256(b"git.example/Team/Project").hexdigest()
-        for origin in (
-            "https://git.example/Team/Project.git",
-            "https://fixture-user:fixture-pass@GIT.EXAMPLE:443/Team/Project.git/?x=fixture#piece",
-            "http://git.example:80/Team/Project",
-            "ssh://fixture-user@GIT.EXAMPLE:22/Team/Project.git",
-            "fixture-user@GIT.EXAMPLE:Team/Project.git",
-            "git://git.example:9418/Team/Project.git",
-        ):
-            with self.subTest(origin=origin):
-                self.git(repo, "config", "remote.origin.url", origin)
-                self.assertEqual(self.project.key(subdirectory), expected)
+        for host in ("github.com", "gitlab.com", "bitbucket.org"):
+            expected = hashlib.sha256(f"{host}/Team/Project".encode()).hexdigest()
+            for origin in (
+                f"https://{host}/Team/Project.git",
+                f"https://fixture-user:fixture-pass@{host.upper()}:443/Team/Project.git/?x=fixture#piece",
+                f"http://{host}:80/Team/Project",
+                f"ssh://fixture-user@{host.upper()}:22/Team/Project.git",
+                f"fixture-user@{host.upper()}:Team/Project.git",
+                f"git://{host}:9418/Team/Project.git",
+            ):
+                with self.subTest(origin=origin):
+                    self.git(repo, "config", "remote.origin.url", origin)
+                    self.assertEqual(self.project.key(subdirectory), expected)
 
     def test_nondefault_ports_remain_distinct(self):
         repo = self.repo("work")
         for port in (2200, 2201):
             with self.subTest(port=port):
-                self.git(repo, "config", "remote.origin.url", f"ssh://git.example:{port}/Team/Project.git")
-                expected = hashlib.sha256(f"git.example:{port}/Team/Project".encode()).hexdigest()
+                self.git(repo, "config", "remote.origin.url", f"ssh://github.com:{port}/Team/Project.git")
+                expected = hashlib.sha256(f"ssh://github.com:{port}/Team/Project.git".encode()).hexdigest()
                 self.assertEqual(self.project.key(repo), expected)
+
+    def test_generic_ssh_home_relative_origins_refuse_scope(self):
+        repo = self.repo("work")
+        for origin in (
+            "alice@git.example:Team/Project.git",
+            "bob@git.example:Team/Project.git",
+            "ssh://alice@git.example/~/Team/Project.git",
+            "ssh://bob@git.example/%7E/Team/Project.git",
+        ):
+            with self.subTest(origin=origin):
+                self.git(repo, "config", "remote.origin.url", origin)
+                with self.assertRaisesRegex(ValueError, "^Ambiguous Git SSH origin path$"):
+                    self.project.key(repo)
+
+    def test_generic_origins_keep_transport_and_path(self):
+        repo = self.repo("work")
+        for origin, canonical in (
+            ("ssh://alice@GIT.EXAMPLE:22/srv/project.git", "ssh://git.example/srv/project.git"),
+            ("alice@git.example:/srv/project.git", "ssh://git.example/srv/project.git"),
+            ("ssh://alice@git.example/srv/project", "ssh://git.example/srv/project"),
+            ("https://git.example/srv/project.git?key=fixture#part", "https://git.example/srv/project.git"),
+        ):
+            with self.subTest(origin=origin):
+                self.git(repo, "config", "remote.origin.url", origin)
+                expected = hashlib.sha256(canonical.encode()).hexdigest()
+                self.assertEqual(self.project.key(repo), expected)
+
+    def test_unknown_network_transport_raises_instead_of_selecting_unscoped_memory(self):
+        repo = self.repo("work")
+        self.git(repo, "config", "remote.origin.url", "custom://git.example/Team/Project")
+        with self.assertRaisesRegex(ValueError, "^Unsupported Git network transport$"):
+            self.project.key(repo)
 
     def test_local_file_missing_and_non_repository_have_no_key(self):
         repo = self.repo("work")
@@ -76,8 +109,19 @@ class ProjectKeyTests(unittest.TestCase):
             "GIT_WORK_TREE": str(other),
             "GIT_COMMON_DIR": str(other / ".git"),
         }):
-            expected = hashlib.sha256(b"git.example/Team/Requested").hexdigest()
+            expected = hashlib.sha256(b"https://git.example/Team/Requested").hexdigest()
             self.assertEqual(self.project.key(requested), expected)
+
+    def test_environment_url_rewrite_does_not_change_the_configured_key(self):
+        repo = self.repo("work")
+        self.git(repo, "config", "remote.origin.url", "https://github.com/Team/Project.git")
+        expected = hashlib.sha256(b"github.com/Team/Project").hexdigest()
+        with patch.dict(os.environ, {
+            "GIT_CONFIG_COUNT": "1",
+            "GIT_CONFIG_KEY_0": "url.https://alternate.example/.insteadOf",
+            "GIT_CONFIG_VALUE_0": "https://github.com/",
+        }):
+            self.assertEqual(self.project.key(repo), expected)
 
     def test_another_git_failure_remains_visible_without_its_output(self):
         origin = "https://fixture-user:private-content@git.example/Team/Project"
