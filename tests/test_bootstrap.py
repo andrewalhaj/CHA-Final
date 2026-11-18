@@ -24,7 +24,7 @@ def _workflow(path):
 class BootstrapTests(unittest.TestCase):
     def test_readme_links_to_the_governing_guides(self):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
-        self.assertIn("This bootstrap contains documentation and repository checks.", readme)
+        self.assertIn("## Current scope", readme)
         for filename in GUIDES:
             with self.subTest(filename=filename):
                 self.assertTrue((ROOT / filename).is_file(), f"{filename} is missing")
