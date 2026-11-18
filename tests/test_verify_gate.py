@@ -90,10 +90,14 @@ def _scenario(mode):
     result["terminal_other_path"] = terminal_hook("touch .env.bak")
     result["terminal_cd"] = terminal_hook('cd "$HERMES_HOME" && touch .env', workdir=home.parent)
     result["terminal_parent_relative"] = terminal_hook("touch ../.env", workdir=path.parent)
-    result["setting_unread"] = terminal_hook("hermes config set memory.provider custom_build")
+    result["terminal_stdout"] = terminal_hook("printf test 1>.env")
+    result["terminal_combined_stdout"] = terminal_hook("printf test &>.env")
+    terminal_hook("printf test 1>.env", status="ok")
+    result["write_after_redirect"] = terminal_hook("touch .env")
+    result["setting_unread"] = terminal_hook('hermes config set "memory.provider" custom_build')
     terminal_hook("hermes config get memory.provider", status="error")
     result["setting_failed_read"] = terminal_hook("hermes config unset memory.provider")
-    terminal_hook("hermes config get memory.provider", status="ok")
+    terminal_hook("hermes config get 'memory.provider'", status="ok")
     result["setting_read"] = terminal_hook("hermes config set memory.provider custom_build")
     return result
 
@@ -144,8 +148,8 @@ class VerifyGateTests(unittest.TestCase):
 
     def test_terminal_gate_respects_managed_paths_and_setting_receipts(self):
         result, _ = self._run("on")
-        for case in ("terminal_unread", "terminal_cd", "terminal_parent_relative", "setting_unread",
-                     "setting_failed_read"):
+        for case in ("terminal_unread", "terminal_cd", "terminal_parent_relative", "terminal_stdout",
+                     "terminal_combined_stdout", "write_after_redirect", "setting_unread", "setting_failed_read"):
             with self.subTest(case=case):
                 self.assertEqual([item["action"] for item in result[case]], ["block"])
         self.assertEqual(result["terminal_other_path"], [])
