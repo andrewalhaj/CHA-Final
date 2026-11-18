@@ -238,8 +238,8 @@ the rehearsal.
 
 ### Historical procedure from the previous repository
 
-The rest of this section describes the previous build. CHA Final does not ship `scripts/deploy.py`,
-`hermes custom-build check` or `hermes custom-build heartbeat`.
+The rest of this section describes the previous build. CHA Final does not ship `scripts/deploy.py`
+or `hermes custom-build check`.
 
 `python scripts/deploy.py <commit>`, run from a checkout on the operator's machine, applies pending migrations the way section 7 describes and does section 3's Update step for one agent host, in a fixed order, and stops at the first step that fails. `<commit>` is the full hash of a commit on `main`.
 
