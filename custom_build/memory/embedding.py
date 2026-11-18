@@ -37,7 +37,7 @@ def _request(method: str, path: str, *, timeout: float, body: dict | None = None
         raise _failure("embed.unavailable")
     try:
         data = response.json()
-    except ValueError:
+    except requests.exceptions.JSONDecodeError:
         raise _failure("embed.unavailable") from None
     if not isinstance(data, dict):
         raise _failure("embed.unavailable")
