@@ -6,7 +6,7 @@ provides_hooks:
   - pre_tool_call
   - post_tool_call
   - transform_llm_output
-python_dependencies:
-  - "psycopg[binary]==3.3.9"
   - on_session_end
   - pre_llm_call
+python_dependencies:
+  - "psycopg[binary]==3.3.9"
