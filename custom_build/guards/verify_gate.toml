@@ -22,7 +22,7 @@ settings = [
 ]
 
 # Terminal detection is by pattern. A command that names and writes files counts them all as changes.
-writes = '''(?<![0-9&])>{1,2}|\btee\b|\bsed\s+(?:-\w+\s+)*-i|\bperl\s+-\w*i|\b(?:cp|mv|rm|ln|truncate|chmod|chown|install|touch|dd)\b'''
+writes = '''(?<![0-9&])(?:1|&)?>>?|\btee\b|\bsed\s+(?:-\w+\s+)*-i|\bperl\s+-\w*i|\b(?:cp|mv|rm|ln|truncate|chmod|chown|install|touch|dd)\b'''
 contents = '''\b(?:contains?|is set to|says|reads|currently)\b'''
 
 # Paths are relative to the active Hermes profile.

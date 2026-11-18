@@ -14,7 +14,10 @@ from .. import failures
 
 CONFIG = Path(__file__).with_suffix(".toml")
 SESSIONS_KEPT = 100
-CONFIG_COMMAND = re.compile(r"\bhermes(?:\s+-\S+(?:\s+[^-\s]\S*)?)*\s+config\s+(set|unset|get|show)\b(?:\s+(\S+))?")
+CONFIG_COMMAND = re.compile(
+    r"\bhermes(?:\s+-\S+(?:\s+[^-\s]\S*)?)*\s+config\s+(set|unset|get|show)\b"
+    r"""(?:[ \t]+(?:"([\w.-]+)"|'([\w.-]+)'|([\w.-]+))(?=$|[\s;&|]))?"""
+)
 SENTENCES = re.compile(r"(?<=[.!?])\s+|\n")
 STATE_LOCK = threading.Lock()
 
@@ -57,7 +60,8 @@ def _terminal_matches(config, files, command, cwd, home):
     for rule, path in files.items():
         if _command_names(path, home, cwd, command):
             yield writing, rule, path
-    for verb, key in CONFIG_COMMAND.findall(command):
+    for verb, double_quoted, single_quoted, unquoted in CONFIG_COMMAND.findall(command):
+        key = double_quoted or single_quoted or unquoted
         if verb == "show":
             yield from ((False, setting, None) for setting in config["settings"])
         elif key in config["settings"]:
