@@ -25,6 +25,7 @@ jobs:
           --health-retries 5
     env:
       CHA_FINAL_TEST_DATABASE_URL: postgresql://cha_final_ci:cha_final_ci@127.0.0.1:5432/cha_final_test?connect_timeout=5
+      HERMES_HOME: ${{ runner.temp }}/cha-final-hermes
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
         with: { fetch-depth: 0 }   # the secret scan reads the whole history
@@ -60,7 +61,14 @@ jobs:
           fi
           [ "$code" -eq 0 ] || { echo "secret scan: gitleaks found a secret (above, redacted)"; exit "$code"; }
       - name: install pinned runtime and lint dependencies
-        run: python -m pip install 'psycopg[binary]==3.3.9' 'ruff==0.17.4'
+        run: python -m pip install 'psycopg[binary]==3.3.9' 'ruff==0.17.4' 'pip-audit==2.10.1'
+      - name: install pinned Hermes v0.23.1
+        shell: bash
+        run: |
+          git clone --quiet --depth 1 --branch v0.23.1 https://github.com/NousResearch/hermes-agent "$RUNNER_TEMP/hermes-agent"
+          [ "$(git -C "$RUNNER_TEMP/hermes-agent" rev-parse HEAD)" = 3b421578588243f920886e6fe79a6faa87ea026e ]
+          python -m pip install --no-deps -r hermes-requirements.txt
+          python -m pip install --no-deps -e "$RUNNER_TEMP/hermes-agent"
       - name: verify disposable PostgreSQL connectivity
         shell: bash
         run: |
@@ -74,4 +82,6 @@ jobs:
                   raise SystemExit("Disposable PostgreSQL did not return the expected result")
           PY
       - run: ruff check .
+      - run: hermes plugins doctor ./custom_build --ci
       - run: python -B -m unittest discover -s tests -v
+      - run: pip-audit
