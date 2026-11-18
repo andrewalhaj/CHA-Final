@@ -11,6 +11,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
+import yaml
+
 PLUGIN = Path(__file__).resolve().parents[1] / "custom_build"
 QUESTION = "What did we decide about the backup?"
 ANSWER = "We chose the synthetic backup."
@@ -86,6 +88,13 @@ def scenario():
 
 
 class RecallGateTests(unittest.TestCase):
+    def test_manifest_declares_the_recall_hooks(self):
+        manifest = yaml.safe_load((PLUGIN / "plugin.yaml").read_text(encoding="utf-8"))
+        self.assertTrue(
+            {"pre_llm_call", "post_tool_call", "transform_llm_output", "on_session_end"}
+            <= set(manifest["provides_hooks"]),
+        )
+
     def _run(self, mode):
         with tempfile.TemporaryDirectory(prefix="cha-recall-gate-") as scratch:
             home = Path(scratch)
