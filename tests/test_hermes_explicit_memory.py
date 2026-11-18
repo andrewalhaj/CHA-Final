@@ -130,6 +130,7 @@ class HermesExplicitMemoryTests(unittest.TestCase):
 
                     recall, _ = self._run(scratch, "read", database_url)
                     self.assertIn(FACT, recall["found"])
+                    self.assertTrue(recall["found"].startswith("Recalled notes"))
                     self.assertEqual(recall["empty"], "")
                 finally:
                     server.execute(sql.SQL("drop database {}").format(database))

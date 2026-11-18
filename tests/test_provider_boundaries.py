@@ -85,8 +85,9 @@ class ProviderBoundaryTests(unittest.TestCase):
         self.assertNotIn(payload, response)
 
     def test_explicit_write_from_subagent_does_not_save(self):
-        import custom_build
         from agent.secret_scope import reset_secret_scope, set_secret_scope
+
+        import custom_build
 
         provider = custom_build.CustomBuildProvider()
         connection = MagicMock()
@@ -106,4 +107,23 @@ class ProviderBoundaryTests(unittest.TestCase):
                 reset_secret_scope(token)
 
         save.assert_not_called()
+
+    def test_malformed_database_setting_is_reported_before_connecting(self):
+        import psycopg
+
+        import custom_build
+
+        provider = custom_build.CustomBuildProvider()
+        with (
+            patch.object(custom_build, "get_secret", return_value="synthetic invalid connection setting"),
+            patch("psycopg.connect", side_effect=psycopg.ProgrammingError("synthetic invalid connection setting"))
+            as connect,
+            self.assertLogs(custom_build.failures.__name__, level="WARNING") as logs,
+        ):
+            provider.initialize("malformed-profile")
+            note = provider.prefetch("brass compass", session_id="malformed-profile")
+
+        connect.assert_not_called()
+        self.assertIn("config.missing", note)
+        self.assertNotIn("synthetic invalid connection setting", "\n".join(logs.output))
         self.assertIn("error", json.loads(response))
