@@ -22,6 +22,8 @@ REASONS = {
     "fact_gate.withheld": "A checkable reply was withheld.",
     "config.missing": "A required memory setting is missing or invalid.",
     "db.unreachable": "The memory store could not be reached.",
+    "db.behind": "The memory store is missing the current runtime schema.",
+    "db.query": "The runtime role could not verify the memory store access it needs.",
     "embed.unavailable": "The local embedding service could not give a usable response.",
     "embed.model_mismatch": "The local embedding service returned a different model or vector size.",
     "recall.invalid": "An explicit memory query must be nonempty text.",
@@ -34,6 +36,7 @@ REASONS = {
     "legacy.target_conflict": "The target already contains facts or a different legacy snapshot.",
     "host.heartbeat": "The agent host recorded a heartbeat.",
     "guard.crash": "An unexpected guard failure occurred.",
+    "guard.not_loaded": "The required custom build provider is not selected or did not load.",
     "verify_gate.blocked": "An unread managed change was blocked.",
     "verify_gate.withheld": "An unread managed claim was withheld.",
     "verify_gate.would_block": "A managed change lacked a successful read.",
@@ -63,10 +66,12 @@ def record(
     diagnostic: Exception | None = None,
     reason: str | None = None,
     defer_write=None,
+    local_only: bool = False,
 ) -> bool | None:
     """Log first, then insert and return its success, or schedule the same insert and return None.
 
-    The caller supplies a configured source label and owns the transaction.
+    The caller supplies a configured source label and owns the transaction. A read-only readiness
+    caller can explicitly record to the local log only.
     """
     if code not in REASONS:
         raise ValueError("Unknown failure code")
@@ -87,6 +92,8 @@ def record(
             for frame, line in walk_tb(diagnostic.__traceback__)
         ]
     logger.log(logging.INFO if result == "ok" else logging.WARNING, "%s", json.dumps(fields))
+    if local_only:
+        return None
     values = (source, code, result, reason)
     if defer_write is not None:
         defer_write(lambda connection: _persist(connection, values))

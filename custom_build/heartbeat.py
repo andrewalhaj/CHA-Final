@@ -3,7 +3,7 @@
 import psycopg
 from agent.secret_scope import get_secret
 
-from . import SOURCE, failures
+from . import SOURCE, failures, startup_check
 
 
 def _exit_failure(code: str) -> int:
@@ -44,8 +44,15 @@ def _run(_args) -> int:
 
 def _add_commands(parser) -> None:
     commands = parser.add_subparsers(dest="custom_build_command", required=True)
-    commands.add_parser("heartbeat", help="Record this database role's heartbeat")
+    commands.add_parser("heartbeat", help="Record this database role's heartbeat").set_defaults(handler=_run)
+    commands.add_parser("check", help="Check provider and store readiness without writes").set_defaults(
+        handler=startup_check.run,
+    )
+
+
+def _dispatch(args) -> int:
+    return args.handler(args)
 
 
 def register(ctx) -> None:
-    ctx.register_cli_command("custom-build", "CHA Final operator commands", _add_commands, _run)
+    ctx.register_cli_command("custom-build", "CHA Final operator commands", _add_commands, _dispatch)

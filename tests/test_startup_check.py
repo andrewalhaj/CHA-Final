@@ -30,9 +30,9 @@ class StartupCheckTests(unittest.TestCase):
         if broken_provider:
             module = installed / "__init__.py"
             original = module.read_text(encoding="utf-8")
-            provider_registration = "        ctx.register_memory_provider(CustomBuildProvider())"
-            self.assertIn(provider_registration, original)
-            module.write_text(original.replace(provider_registration, "        raise RuntimeError('unusable provider')"),
+            constructor = "    def __init__(self) -> None:\n"
+            self.assertIn(constructor, original)
+            module.write_text(original.replace(constructor, constructor + "        raise RuntimeError('unusable provider')\n", 1),
                               encoding="utf-8")
 
         completed = subprocess.run(
@@ -75,6 +75,13 @@ class StartupCheckTests(unittest.TestCase):
             self._assert_failure(self._run(folder, url), "db.behind")
 
     @unittest.skipUnless(hermes.TEST_DATABASE_URL, "set CHA_FINAL_TEST_DATABASE_URL to disposable PostgreSQL")
+    def test_reports_blocked_schema_query_within_statement_deadline(self):
+        fixture = hermes.HermesExplicitMemoryTests()
+        with tempfile.TemporaryDirectory() as folder, fixture._database() as url, psycopg.connect(url) as owner:
+            owner.execute("lock table cha_final.facts in access exclusive mode")
+            self._assert_failure(self._run(folder, url), "db.query")
+
+    @unittest.skipUnless(hermes.TEST_DATABASE_URL, "set CHA_FINAL_TEST_DATABASE_URL to disposable PostgreSQL")
     def test_read_only_check_uses_restricted_runtime_role_without_inserts(self):
         fixture = hermes.HermesExplicitMemoryTests()
         with _app_login() as (username, password), fixture._database() as url:
@@ -84,7 +91,7 @@ class StartupCheckTests(unittest.TestCase):
                 owner.execute(sql.SQL("grant usage on schema cha_final to {}").format(login))
                 owner.execute(sql.SQL("grant select, insert on cha_final.facts, cha_final.project_facts to {}").format(login))
                 owner.execute(sql.SQL("grant insert on cha_final.events to {}").format(login))
-                owner.execute(sql.SQL("grant usage on all sequences in schema cha_final to {}").format(login))
+                owner.execute(sql.SQL("grant usage on sequence cha_final.facts_id_seq to {}").format(login))
             with tempfile.TemporaryDirectory() as folder:
                 completed = self._run(folder, runtime_url)
             self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
@@ -99,5 +106,11 @@ class StartupCheckTests(unittest.TestCase):
                            (select is_called from cha_final.events_id_seq)
                 """).fetchone(), (0, 0, 0, False, False))
                 owner.execute(sql.SQL("revoke insert on cha_final.events from {}").format(login))
+            with tempfile.TemporaryDirectory() as folder:
+                self._assert_failure(self._run(folder, runtime_url), "db.query")
+
+            with psycopg.connect(url) as owner:
+                owner.execute(sql.SQL("grant insert on cha_final.events to {}").format(login))
+                owner.execute(sql.SQL("revoke usage on sequence cha_final.facts_id_seq from {}").format(login))
             with tempfile.TemporaryDirectory() as folder:
                 self._assert_failure(self._run(folder, runtime_url), "db.query")
