@@ -3,6 +3,7 @@
 import io
 import json
 import os
+import shutil
 import subprocess
 import tarfile
 import tempfile
@@ -24,8 +25,11 @@ def _stage(home, revision):
         ["git", "archive", "--format=tar", revision, "custom_build"],
         cwd=hermes.ROOT, capture_output=True, check=True, timeout=10,
     ).stdout
+    installed = home / "plugins" / "custom_build"
+    if installed.exists():
+        shutil.rmtree(installed)  # The prior revision must leave no files in this disposable install.
     with tarfile.open(fileobj=io.BytesIO(archive)) as artifact:
-        artifact.extractall(home / "plugins", filter="data")
+        artifact.extractall(installed.parent, filter="data")
     return archive
 
 
@@ -106,7 +110,6 @@ class DisposableRolloutTests(unittest.TestCase):
                 path.relative_to(home / "plugins").as_posix(): path.read_bytes()
                 for path in installed.rglob("*") if path.is_file()
             }
-            self.assertEqual(restored.keys(), _files(previous_archive).keys())
             self.assertEqual(restored, _files(previous_archive))
 
             after, _ = runner._run_installed(
