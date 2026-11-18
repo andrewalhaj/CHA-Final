@@ -214,6 +214,35 @@ The files in `migrations/` are applied to `<project-ref>` in file-name order, ea
 
 ## 8. Deploying to an agent host
 
+### Disposable rollout and rollback rehearsal
+
+Use the pinned Hermes v0.23.1 environment from `.github/workflows/ci.yml`, a full Git checkout, and a
+disposable PostgreSQL 17 server. Set `CHA_FINAL_TEST_DATABASE_URL` to that server's connection string
+with permission to create and drop disposable databases and roles. The test skips when this variable is
+unset. Run from the checkout root:
+
+```sh
+python -B -m unittest discover -s tests -p test_disposable_rollout.py -v
+```
+
+The rehearsal stages the plugin directly from Git archives in one temporary Hermes home. It writes a
+synthetic fact through the plugin revision before migration 0003 with a restricted login, applies 0003
+to the populated database, and recalls that fact through `HEAD`. It then introduces a registration
+failure into the disposable candidate, verifies that a fresh Hermes process fails validation, and
+replaces the entire plugin directory with the previous revision. It compares the installed file bytes
+with that revision, verifies a new write and recall in separate Hermes processes, recalls the original
+fact again, and checks that migration 0003 remains applied. An overlay leaves files from the candidate
+behind and fails the file comparison.
+
+This is a rehearsal of plugin discovery, memory dispatch and schema compatibility. The Git archives
+are staged directly in the test. The Hermes installer, gateway, systemd, SSH and Supabase are outside
+the rehearsal.
+
+### Historical procedure from the previous repository
+
+The rest of this section describes the previous build. CHA Final does not ship `scripts/deploy.py`
+or `hermes custom-build check`.
+
 `python scripts/deploy.py <commit>`, run from a checkout on the operator's machine, applies pending migrations the way section 7 describes and does section 3's Update step for one agent host, in a fixed order, and stops at the first step that fails. `<commit>` is the full hash of a commit on `main`.
 
 1. **Refuses an unproven commit:** one that is not on `origin/main`, or whose CI runs did not all succeed. No run yet is a refusal.
