@@ -1,6 +1,6 @@
 """Verify the documentation baseline and the bootstrap workflow pins."""
 
-import re
+import json
 import subprocess
 import unittest
 from pathlib import Path
@@ -12,6 +12,7 @@ GUIDES = ("CONTRIBUTING.md", "ARCHITECTURE.md", "OPERATIONS.md")
 class BootstrapTests(unittest.TestCase):
     def test_readme_links_to_the_governing_guides(self):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        self.assertIn("This bootstrap contains documentation and repository checks.", readme)
         for filename in GUIDES:
             with self.subTest(filename=filename):
                 self.assertTrue((ROOT / filename).is_file(), f"{filename} is missing")
@@ -34,11 +35,16 @@ class BootstrapTests(unittest.TestCase):
         workflows = sorted((ROOT / ".github" / "workflows").glob("*.yml"))
         self.assertTrue(workflows, "The bootstrap workflow is missing")
         for workflow in workflows:
-            uses = re.findall(
-                r"^[ \t]*(?:-[ \t]+)?uses:[ \t]+([^#\s]+)",
-                workflow.read_text(encoding="utf-8"),
-                flags=re.MULTILINE,
+            parsed = subprocess.run(
+                ["ruby", "-rjson", "-ryaml", "-e",
+                 "puts JSON.generate(YAML.safe_load(File.read(ARGV.fetch(0))))", str(workflow)],
+                check=True,
+                capture_output=True,
+                text=True,
             )
+            jobs = json.loads(parsed.stdout)["jobs"].values()
+            callers = [*jobs, *(step for job in jobs for step in job.get("steps", []))]
+            uses = [caller["uses"] for caller in callers if "uses" in caller]
             self.assertTrue(uses, f"No action uses found in {workflow.name}")
             for action in uses:
                 with self.subTest(action=action):
