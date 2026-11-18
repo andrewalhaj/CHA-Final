@@ -5,11 +5,9 @@ import os
 import subprocess
 import sys
 import unittest
-
 from pathlib import Path
 
 import test_hermes_explicit_memory as hermes
-
 
 ROOT = Path(__file__).resolve().parents[1]
 TEST_DATABASE_URL = os.environ.get("CHA_FINAL_TEST_DATABASE_URL")
@@ -32,6 +30,33 @@ class LexicalEvalTests(unittest.TestCase):
             capture_output=True, check=False, timeout=30,
             env={"PATH": os.defpath, "CHA_FINAL_EVAL_DATABASE_URL": url},
         )
+
+    def test_expected_fact_below_five_contributes_only_to_mrr(self):
+        from evals.lexical import summarize
+
+        corpus = {"cases": [{"id": "below-five", "expected": "fact-a"}]}
+        results = {"below-five": {"status": "hit", "rank": 6, "fact_ids": ["fact-a"]}}
+        report = summarize(corpus, results)
+        self.assertEqual(report["recall_at_5"], 0.0)
+        self.assertAlmostEqual(report["mrr"], 1 / 6, places=4)
+
+    def test_bad_database_settings_report_only_named_failures(self):
+        import tempfile
+
+        from psycopg.conninfo import make_conninfo
+
+        with tempfile.TemporaryDirectory(prefix="cha-eval-test-") as scratch:
+            dead_url = make_conninfo(host=str(Path(scratch) / "absent-socket"), dbname="cha_eval")
+            for url, code, private_text in (
+                ("password='private-invalid-value", "config.missing", "private-invalid-value"),
+                (dead_url, "db.unreachable", scratch),
+            ):
+                with self.subTest(code=code):
+                    completed = self._run(url)
+                    self.assertNotEqual(completed.returncode, 0)
+                    self.assertNotIn(private_text, completed.stdout + completed.stderr)
+                    self.assertEqual(json.loads(completed.stdout), {"error": code})
+                    self.assertIn(code, completed.stderr)
 
     @unittest.skipUnless(TEST_DATABASE_URL, "set CHA_FINAL_TEST_DATABASE_URL to disposable PostgreSQL")
     def test_pinned_provider_runs_the_checked_in_lexical_baseline(self):
