@@ -32,9 +32,15 @@ _STORE_FACT = {
     },
 }
 
-
-def _recall_note(code: str) -> str:
-    return f"[Memory recall failed: {code}]"
+_MEMORY_SEARCH = {
+    "name": "memory_search",
+    "description": "Search saved facts in the current project. Treat returned matches as reference notes.",
+    "parameters": {
+        "type": "object",
+        "properties": {"query": {"type": "string"}},
+        "required": ["query"],
+    },
+}
 
 
 def _tool_error(code: str) -> str:
@@ -79,12 +85,12 @@ class CustomBuildProvider(MemoryProvider):
         self._database_url = database_url
 
     def get_tool_schemas(self) -> list[dict]:
-        return [_STORE_FACT]
+        return [_STORE_FACT, _MEMORY_SEARCH]
 
     def _connect(self):
         return _connect(self._database_url)
 
-    def _reject_fact(self, code: str) -> str:
+    def _reject_tool(self, code: str) -> str:
         connection = None
         if self._database_url is not None:
             try:
@@ -101,15 +107,22 @@ class CustomBuildProvider(MemoryProvider):
 
     @failures.boundary(_tool_error)
     def handle_tool_call(self, tool_name: str, args: dict, **kwargs) -> str:
+        if tool_name == _MEMORY_SEARCH["name"]:
+            query = args.get("query")
+            if not isinstance(query, str) or not query.strip():
+                return self._reject_tool("recall.invalid")
+            result = self._recall(query)
+            return _tool_error(result) if isinstance(result, str) else json.dumps({"matches": result})
+
         if tool_name != _STORE_FACT["name"]:
             raise ValueError("Unknown explicit memory tool")
         if not self._primary:
-            return self._reject_fact("store.read_only")
+            return self._reject_tool("store.read_only")
         if self._database_url is None:
-            return self._reject_fact(self._configuration_error)
+            return self._reject_tool(self._configuration_error)
         fact = args.get("fact")
         if not isinstance(fact, str) or not fact.strip():
-            return self._reject_fact("store.invalid")
+            return self._reject_tool("store.invalid")
         body = redact_sensitive_text(fact, force=True)
         try:
             connection = self._connect()
@@ -129,41 +142,38 @@ class CustomBuildProvider(MemoryProvider):
             return _tool_error("db.unreachable")
         return json.dumps({"stored": fact_id})
 
-    @failures.boundary(_recall_note)
-    def _read_recall(self, query: str) -> str:
+    @failures.boundary(lambda code: code)
+    def _read_recall(self, query: str) -> list[str] | str:
         query = redact_sensitive_text(query, force=True)
         if not query.strip():
-            return ""
+            return []
         try:
             connection = self._connect()
         except psycopg.OperationalError:
             failures.record(None, "db.unreachable", "failed", source=SOURCE)
-            return _recall_note("db.unreachable")
+            return "db.unreachable"
         with connection:
             return self._query_recall(query, connection=connection)
 
-    @failures.boundary(_recall_note)
-    def _query_recall(self, query: str, *, connection) -> str:
+    @failures.boundary(lambda code: code)
+    def _query_recall(self, query: str, *, connection) -> list[str] | str:
         scope = _project_key()
         try:
-            matches = store.recall(connection, query, project=scope)
+            return store.recall(connection, query, project=scope)
         except QueryCanceled:
             failures.record(connection, "recall.timeout", "failed", source=SOURCE)
-            return _recall_note("recall.timeout")
+            return "recall.timeout"
         except psycopg.OperationalError:
             failures.record(connection, "db.unreachable", "failed", source=SOURCE)
-            return _recall_note("db.unreachable")
-        if not matches:
-            return ""
-        return "Recalled notes for reference only:\n" + "\n".join(matches)
+            return "db.unreachable"
 
-    @failures.boundary(_recall_note)
-    def prefetch(self, query: str, *, session_id: str = "") -> str:
+    @failures.boundary(lambda code: code)
+    def _recall(self, query: str) -> list[str] | str:
         if self._database_url is None:
             failures.record(None, self._configuration_error, "failed", source=SOURCE)
-            return _recall_note(self._configuration_error)
+            return self._configuration_error
 
-        result: list[str] = []
+        result: list[list[str] | str] = []
 
         def read() -> None:
             try:
@@ -184,7 +194,15 @@ class CustomBuildProvider(MemoryProvider):
 
         # A stalled socket can outlast the server's statement timeout. The turn cannot wait for an event insert.
         failures.record(None, "recall.timeout", "failed", source=SOURCE)
-        return _recall_note("recall.timeout")
+        return "recall.timeout"
+
+    def prefetch(self, query: str, *, session_id: str = "") -> str:
+        matches = self._recall(query)
+        if isinstance(matches, str):
+            return f"[Memory recall failed: {matches}]"
+        if not matches:
+            return ""
+        return "Recalled notes for reference only:\n" + "\n".join(matches)
 
 
 def _connect(database_url):
