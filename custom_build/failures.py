@@ -1,4 +1,4 @@
-"""Record first-milestone failures without logging their input or exception text."""
+"""Record runtime events without logging their input or exception text."""
 
 import json
 import logging
@@ -24,6 +24,7 @@ REASONS = {
     "legacy.mapping_invalid": "The legacy project map could not be read or is invalid.",
     "legacy.source_invalid": "The legacy snapshot contains an unresolved project association.",
     "legacy.target_conflict": "The target already contains facts or a different legacy snapshot.",
+    "host.heartbeat": "The agent host recorded a heartbeat.",
     "unhandled": "An unexpected memory failure occurred.",
     "events.write_failed": "The failure event could not be written to the store.",
 }
@@ -54,7 +55,7 @@ def record(
     """
     if code not in REASONS:
         raise ValueError("Unknown failure code")
-    if result not in ("failed", "degraded"):
+    if result not in ("ok", "failed", "degraded"):
         raise ValueError("Unknown failure result")
 
     reason = REASONS[code]
@@ -70,7 +71,7 @@ def record(
             {"function": frame.f_code.co_name, "line": line}
             for frame, line in walk_tb(diagnostic.__traceback__)
         ]
-    logger.warning("%s", json.dumps(fields))
+    logger.log(logging.INFO if result == "ok" else logging.WARNING, "%s", json.dumps(fields))
     if conn is None:
         return _write_failed(source, code)
 

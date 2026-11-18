@@ -10,9 +10,8 @@ import unittest
 from pathlib import Path
 
 import psycopg
-from psycopg.conninfo import make_conninfo
-
 import test_hermes_explicit_memory as hermes
+from psycopg.conninfo import make_conninfo
 
 
 class HostHeartbeatTests(unittest.TestCase):
@@ -26,7 +25,10 @@ class HostHeartbeatTests(unittest.TestCase):
         if wrapper:
             script = installed / "scripts" / "custom-build-heartbeat.py"
             self.assertTrue(script.is_file(), "the Hermes cron wrapper is missing")
-            command = [sys.executable, "-B", str(script)]
+            scripts = home / "scripts"
+            scripts.mkdir()
+            entry = shutil.copy2(script, scripts)
+            command = [sys.executable, "-B", entry]
         else:
             command = [sys.executable, "-B", "-m", "hermes_cli.main", "custom-build", "heartbeat"]
         return subprocess.run(

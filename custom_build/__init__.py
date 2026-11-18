@@ -193,3 +193,7 @@ def register(ctx) -> None:
     # The provider collector has no state property. Avoid creating state during ordinary discovery.
     if not hasattr(type(ctx), "state"):
         ctx.register_memory_provider(CustomBuildProvider())
+    else:
+        from . import heartbeat
+
+        heartbeat.register(ctx)
