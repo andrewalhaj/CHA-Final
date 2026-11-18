@@ -135,7 +135,7 @@ class HermesExplicitMemoryTests(unittest.TestCase):
         with psycopg.connect(TEST_DATABASE_URL, autocommit=True) as server:
             server.execute(sql.SQL("create database {}").format(database))
             try:
-                self.assertTrue(MIGRATIONS, "the database migrations are missing")
+                self.assertTrue(migrations, "the database migrations are missing")
                 with psycopg.connect(database_url) as conn:
                     for migration in migrations:
                         conn.execute(migration.read_text(encoding="utf-8"))
