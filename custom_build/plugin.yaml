@@ -6,6 +6,7 @@ provides_hooks:
   - pre_llm_call
   - pre_tool_call
   - post_tool_call
+  - post_approval_response
   - transform_llm_output
   - on_session_end
 python_dependencies:
