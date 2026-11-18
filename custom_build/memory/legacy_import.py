@@ -5,16 +5,20 @@ import json
 from uuid import UUID
 
 from psycopg import Connection
+from psycopg.pq import TransactionStatus
 
 from custom_build.memory import store
 
 
 class LegacyImportError(ValueError):
-    """The target's existing facts or marker conflict with this import."""
+    """The target connection or data is unsuitable for this import."""
 
 
 def apply_snapshot(conn: Connection, rows: list[tuple[UUID, str, str | None]]) -> int:
-    """Import at READ COMMITTED, or return zero for an identical completed snapshot."""
+    """Import on an idle connection, or return zero for an identical completed snapshot."""
+    if conn.info.transaction_status != TransactionStatus.IDLE:
+        raise LegacyImportError("The target connection must be idle before importing.")
+
     digest = hashlib.sha256()
     for source_id, body, project in rows:
         encoded_row = json.dumps((str(source_id), body, project), separators=(",", ":"))
@@ -22,6 +26,8 @@ def apply_snapshot(conn: Connection, rows: list[tuple[UUID, str, str | None]]) -
     snapshot_digest = digest.hexdigest()
 
     with conn.transaction():
+        # The emptiness checks must see writes committed before the locks were acquired.
+        conn.execute("set transaction isolation level read committed")
         # Take these locks in the same order on every retry, before reading any target tables.
         conn.execute(
             "lock table cha_final.facts, cha_final.project_facts, cha_final.legacy_import "
