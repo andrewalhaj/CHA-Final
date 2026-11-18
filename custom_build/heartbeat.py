@@ -32,7 +32,9 @@ def _run(_args) -> int:
 
     with connection:
         try:
-            source, = connection.execute("select session_user").fetchone()
+            source, _ = connection.execute(
+                "select session_user, pg_catalog.set_config('statement_timeout', '3000', false)",
+            ).fetchone()
         except psycopg.OperationalError:
             return _record_failure("db.unreachable")
         if not failures.record(connection, "host.heartbeat", "ok", source=source):
