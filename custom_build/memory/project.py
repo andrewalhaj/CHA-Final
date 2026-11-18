@@ -5,7 +5,7 @@ import os
 import re
 import subprocess
 from pathlib import Path, PureWindowsPath
-from urllib.parse import unquote, urlsplit
+from urllib.parse import quote, unquote, urlsplit
 
 _DEFAULT_PORTS = {"http": 80, "https": 443, "ssh": 22, "git": 9418}
 _PUBLIC_FORGES = frozenset({"github.com", "gitlab.com", "bitbucket.org"})
@@ -46,7 +46,8 @@ def _canonical_origin(origin: str) -> str | None:
         relative_scp = not path.startswith("/")
         if relative_scp:
             path = f"/{path}"
-        origin = f"ssh://{authority}{path}"
+        # Git treats SCP paths literally and decodes SSH URL paths.
+        origin = f"ssh://{authority}{quote(path, safe='/')}"
 
     scheme = origin.partition("://")[0].lower()
     if scheme == "file":
