@@ -53,7 +53,8 @@ Hermes's developer guide says a memory provider can also load as an ordinary plu
 
 - **Prefetch blocks the turn.** Hermes waits for `prefetch()` for up to 8 seconds, then treats a timeout or an error as "no notes" and carries on. The provider therefore enforces its own deadline below 8 seconds. On failure it returns a "recall failed" note with its failure code instead of raising, because that is the only way the failure reaches the turn.
 - **There is no input for a second query.** `prefetch()` receives only the user's message. The action query (section 3.5) therefore runs from a `pre_llm_call` plugin. Hermes runs `pre_llm_call` before prefetch, bounds it with its own callback timeout (`plugins.hook_callback_timeout`, 30 seconds by default), and skips prefetch entirely for a turn that `pre_llm_call` blocks.[4]
-- **The project key comes from the session's working directory.** Both copies of the code (section 1) read it with Hermes's documented helper, `agent.runtime_cwd.resolve_agent_cwd()`, and turn it into a key the same way.[3][15] `initialize()` receives the directory as `cwd` only when the agent was built with one, and only as it was at that moment, so neither copy relies on it.[3][14] The key comes from the repository, so it is the same on every machine: the normalised URL of the repository's `origin` remote. An absolute path is never used, because it differs between machines. A workspace that is not a repository has no project, and neither has a repository whose `origin` is missing, a local path or a file URL: Hermes v0.23.1 has no per-repository setting that could name one (#112). Neither copy calls `os.getcwd()` itself.
+- **The project key comes from the active session's working directory.** CHA Final resolves the workspace on each explicit save and recall, including inside the context-bound recall worker. It uses the declared session workspace, the profile's terminal directory, or Hermes's `agent.runtime_cwd.resolve_agent_cwd()`, in that order.[3][15] A declared directory that cannot be inspected fails the operation. A non-repository or a repository with a local, file, or missing `origin` has no project. A network origin is normalized and hashed with SHA-256. Default endpoints on known public Git hosts share a key across common transport aliases. Generic hosts keep their transport in the key, and ambiguous home-relative SSH paths fail the operation. The database stores the digest.
+- **Explicit facts use exactly one scope.** Project queries read only facts with the same key. Sessions without a project use the original unscoped table. Migration `0002_project_facts.sql` adds a separate project table and allocates IDs from the original sequence. The original reader can still access its unscoped rows after the migration and cannot see rows saved to the project table. This is application-level filtering within a configured database role.
 - **Every entry point goes through one boundary wrapper.** Hermes contains errors from hooks and providers, often silently (section 5.5). Each function Hermes calls is wrapped by a single shared wrapper in the failure module. On an unexpected exception it records the failure, with a sanitized diagnostic in the log (section 6.1), then does what that entry point requires:
 
   | Entry point | Recorded as | Then |
@@ -163,7 +164,9 @@ Retrieval is hybrid, with a rerank stage. A search by meaning and a search by wo
 | References | Cosine over chunks | BM25 over the same chunks, in application code | Rank fusion | No |
 | Sessions | Cosine over chunks | Postgres full-text | Rank fusion | No |
 
-For the facts store:
+The following facts-retrieval flow describes the previous implementation. CHA Final currently uses lexical search with the explicit-memory scope described in section 2.
+
+For the previous facts store:
 
 1. Embed the query.
 2. Fetch a candidate pool larger than the number of results wanted, from live rows in the current project and live rows with no project, which mirrored built-in memory has (section 3.3, #142). A session with no project searches live rows in every project.
