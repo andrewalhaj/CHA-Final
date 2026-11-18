@@ -17,7 +17,7 @@ from test_disposable_rollout import _app_login
 
 
 class StartupCheckTests(unittest.TestCase):
-    def _run(self, folder, database_url=None, *, provider="custom_build", broken_provider=False):
+    def _run(self, folder, database_url=None, *, provider="custom_build", broken_provider=False, available=True):
         home = Path(folder) / "hermes"
         installed = home / "plugins" / "custom_build"
         shutil.copytree(hermes.PLUGIN, installed, ignore=shutil.ignore_patterns("__pycache__"))
@@ -35,6 +35,13 @@ class StartupCheckTests(unittest.TestCase):
             module.write_text(original.replace(constructor, constructor + "        raise RuntimeError('unusable provider')\n", 1),
                               encoding="utf-8")
 
+        if not available:
+            module = installed / "__init__.py"
+            original = module.read_text(encoding="utf-8")
+            method = "    def is_available(self) -> bool:\n"
+            self.assertIn(method, original)
+            module.write_text(original.replace(method, method + "        return False\n", 1), encoding="utf-8")
+
         completed = subprocess.run(
             [sys.executable, "-B", "-m", "hermes_cli.main", "custom-build", "check"],
             cwd=folder, env={"HOME": str(folder), "HERMES_HOME": str(home), "PATH": os.defpath},
@@ -49,7 +56,7 @@ class StartupCheckTests(unittest.TestCase):
         self.assertNotIn("events.write_failed", completed.stderr)
 
     def test_refuses_other_provider_or_unusable_selected_provider(self):
-        for config in ({"provider": "disabled"}, {"broken_provider": True}):
+        for config in ({"provider": "disabled"}, {"broken_provider": True}, {"available": False}):
             with self.subTest(config=config), tempfile.TemporaryDirectory() as folder:
                 self._assert_failure(self._run(folder, **config), "guard.not_loaded")
 
@@ -112,5 +119,11 @@ class StartupCheckTests(unittest.TestCase):
             with psycopg.connect(url) as owner:
                 owner.execute(sql.SQL("grant insert on cha_final.events to {}").format(login))
                 owner.execute(sql.SQL("revoke usage on sequence cha_final.facts_id_seq from {}").format(login))
+            with tempfile.TemporaryDirectory() as folder:
+                self._assert_failure(self._run(folder, runtime_url), "db.query")
+
+            with psycopg.connect(url) as owner:
+                owner.execute(sql.SQL("grant usage on sequence cha_final.facts_id_seq to {}").format(login))
+                owner.execute(sql.SQL("alter role {} set default_transaction_read_only to on").format(login))
             with tempfile.TemporaryDirectory() as folder:
                 self._assert_failure(self._run(folder, runtime_url), "db.query")
