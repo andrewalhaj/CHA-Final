@@ -24,13 +24,18 @@ def key(cwd: Path) -> str | None:
         ["git", "-C", str(cwd), *args], capture_output=True, text=True, check=False, env=env,
     )
     if result.returncode == 0:
-        origin = _canonical_origin(result.stdout.strip())
-        return hashlib.sha256(origin.encode()).hexdigest() if origin else None
+        return key_for_origin(result.stdout)
     if result.returncode == 1 and not result.stderr.strip():
         return None
     if result.returncode == 128 and result.stderr.strip() == "fatal: --local can only be used inside a git repository":
         return None
     raise subprocess.CalledProcessError(result.returncode, ["git", *args])
+
+
+def key_for_origin(origin: str) -> str | None:
+    """Derive the project key for an explicitly supplied Git origin."""
+    canonical = _canonical_origin(origin.strip())
+    return hashlib.sha256(canonical.encode()).hexdigest() if canonical else None
 
 
 def _canonical_origin(origin: str) -> str | None:
