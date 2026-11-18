@@ -15,7 +15,7 @@ from psycopg.conninfo import make_conninfo
 
 
 class HostHeartbeatTests(unittest.TestCase):
-    def _run(self, directory, database_url=None, *, wrapper=False):
+    def _run(self, directory, database_url=None, *, wrapper=False, timeout=30):
         home = Path(directory) / "hermes"
         installed = home / "plugins" / "custom_build"
         shutil.copytree(hermes.PLUGIN, installed, dirs_exist_ok=True, ignore=shutil.ignore_patterns("__pycache__"))
@@ -37,7 +37,7 @@ class HostHeartbeatTests(unittest.TestCase):
             env={"HOME": str(directory), "HERMES_HOME": str(home), "PATH": os.defpath},
             capture_output=True,
             text=True,
-            timeout=30,
+            timeout=timeout,
             check=False,
         )
 
@@ -71,5 +71,14 @@ class HostHeartbeatTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory, hermes.HermesExplicitMemoryTests()._database() as url:
             read_only = make_conninfo(url, options="-c default_transaction_read_only=on")
             self._assert_failure(self._run(directory, read_only), "events.write_failed")
+            with psycopg.connect(url) as conn:
+                self.assertEqual(conn.execute("select count(*) from cha_final.events").fetchone(), (0,))
+
+    @unittest.skipUnless(hermes.TEST_DATABASE_URL, "set CHA_FINAL_TEST_DATABASE_URL to disposable PostgreSQL")
+    def test_reports_locked_events_within_statement_deadline(self):
+        with tempfile.TemporaryDirectory() as directory, hermes.HermesExplicitMemoryTests()._database() as url:
+            with psycopg.connect(url) as locker:
+                locker.execute("lock table cha_final.events in access exclusive mode")
+                self._assert_failure(self._run(directory, url, timeout=8), "events.write_failed")
             with psycopg.connect(url) as conn:
                 self.assertEqual(conn.execute("select count(*) from cha_final.events").fetchone(), (0,))
