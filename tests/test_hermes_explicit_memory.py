@@ -54,10 +54,11 @@ def _scenario(mode):
 
         if mode == "write":
             stored = store_fact(FACT)
+            rejected = store_fact(" ")
             # Keep dispatch real, but isolate the plugin's own forced redaction from Hermes's first pass.
             with patch("agent.memory_manager._redact_for_provider", side_effect=lambda value: value):
                 redacted = store_fact(f"Harbor marker credential {SECRET_MARKER}")
-            return {"stored": stored["stored"], "redacted": redacted["stored"]}
+            return {"stored": stored["stored"], "redacted": redacted["stored"], "rejected": rejected}
         if mode == "read":
             return {"found": prefetch("brass compasses"), "empty": prefetch("elephants")}
         return {"prefetch": prefetch("brass compass"), "tool": store_fact(FACT)}
@@ -117,6 +118,7 @@ class HermesExplicitMemoryTests(unittest.TestCase):
                     saved, _ = self._run(scratch, "write", database_url)
                     self.assertIs(type(saved["stored"]), int)
                     self.assertIs(type(saved["redacted"]), int)
+                    self.assertEqual(saved["rejected"], {"error": "store.invalid"})
                     with psycopg.connect(database_url) as conn:
                         body, = conn.execute(
                             "select body from cha_final.facts where id = %s", (saved["stored"],),
@@ -124,6 +126,8 @@ class HermesExplicitMemoryTests(unittest.TestCase):
                         redacted, = conn.execute(
                             "select body from cha_final.facts where id = %s", (saved["redacted"],),
                         ).fetchone()
+                        failures = conn.execute("select code, result from cha_final.events").fetchall()
+                    self.assertEqual(failures, [("store.invalid", "failed")])
                     self.assertEqual(body, FACT)
                     self.assertIn("Harbor marker credential", redacted)
                     self.assertNotIn(SECRET_MARKER, redacted)

@@ -71,26 +71,52 @@ class CustomBuildProvider(MemoryProvider):
     def get_tool_schemas(self) -> list[dict]:
         return [_STORE_FACT]
 
+    def _connect(self):
+        return psycopg.connect(
+            self._database_url, autocommit=True, connect_timeout=_CONNECT_TIMEOUT, options=_STATEMENT_OPTIONS,
+        )
+
+    def _reject_fact(self, code: str) -> str:
+        connection = None
+        if self._database_url is not None:
+            try:
+                connection = self._connect()
+            except psycopg.OperationalError:
+                failures.record(None, code, "failed", source=SOURCE)
+                return _tool_error(code)
+        if connection is None:
+            failures.record(None, code, "failed", source=SOURCE)
+        else:
+            with connection:
+                failures.record(connection, code, "failed", source=SOURCE)
+        return _tool_error(code)
+
     @failures.boundary(_tool_error)
     def handle_tool_call(self, tool_name: str, args: dict, **kwargs) -> str:
         if tool_name != _STORE_FACT["name"]:
             raise ValueError("Unknown explicit memory tool")
         if not self._primary:
-            failures.record(None, "store.read_only", "failed", source=SOURCE)
-            return _tool_error("store.read_only")
+            return self._reject_fact("store.read_only")
         if self._database_url is None:
-            failures.record(None, self._configuration_error, "failed", source=SOURCE)
-            return _tool_error(self._configuration_error)
+            return self._reject_fact(self._configuration_error)
         fact = args.get("fact")
         if not isinstance(fact, str) or not fact.strip():
-            failures.record(None, "store.invalid", "failed", source=SOURCE)
-            return _tool_error("store.invalid")
+            return self._reject_fact("store.invalid")
         body = redact_sensitive_text(fact, force=True)
         try:
-            with psycopg.connect(self._database_url, connect_timeout=_CONNECT_TIMEOUT, options=_STATEMENT_OPTIONS) as conn:
-                fact_id = store.save(conn, body)
+            connection = self._connect()
         except psycopg.OperationalError:
             failures.record(None, "db.unreachable", "failed", source=SOURCE)
+            return _tool_error("db.unreachable")
+        with connection:
+            return self._write_fact(body, connection=connection)
+
+    @failures.boundary(_tool_error)
+    def _write_fact(self, body: str, *, connection) -> str:
+        try:
+            fact_id = store.save(connection, body)
+        except psycopg.OperationalError:
+            failures.record(connection, "db.unreachable", "failed", source=SOURCE)
             return _tool_error("db.unreachable")
         return json.dumps({"stored": fact_id})
 
@@ -100,16 +126,22 @@ class CustomBuildProvider(MemoryProvider):
         if not query.strip():
             return ""
         try:
-            with psycopg.connect(
-                self._database_url, autocommit=True, connect_timeout=_CONNECT_TIMEOUT, options=_STATEMENT_OPTIONS,
-            ) as conn:
-                try:
-                    matches = store.recall(conn, query)
-                except QueryCanceled:
-                    failures.record(conn, "recall.timeout", "failed", source=SOURCE)
-                    return _recall_note("recall.timeout")
+            connection = self._connect()
         except psycopg.OperationalError:
             failures.record(None, "db.unreachable", "failed", source=SOURCE)
+            return _recall_note("db.unreachable")
+        with connection:
+            return self._query_recall(query, connection=connection)
+
+    @failures.boundary(_recall_note)
+    def _query_recall(self, query: str, *, connection) -> str:
+        try:
+            matches = store.recall(connection, query)
+        except QueryCanceled:
+            failures.record(connection, "recall.timeout", "failed", source=SOURCE)
+            return _recall_note("recall.timeout")
+        except psycopg.OperationalError:
+            failures.record(connection, "db.unreachable", "failed", source=SOURCE)
             return _recall_note("db.unreachable")
         if not matches:
             return ""

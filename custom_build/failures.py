@@ -91,7 +91,10 @@ def boundary(failure_result):
                     # The original cause stays inside this wrapper, where it is inspected without its message.
                     raise _BoundaryFailure from error
             except _BoundaryFailure as failure:
-                record(None, "unhandled", "failed", source="custom_build", diagnostic=failure.__cause__)
+                record(
+                    kwargs.get("connection"), "unhandled", "failed",
+                    source="custom_build", diagnostic=failure.__cause__,
+                )
                 return failure_result("unhandled")
 
         return call
