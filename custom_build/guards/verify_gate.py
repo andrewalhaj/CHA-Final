@@ -35,16 +35,20 @@ def _command_names(path, home, cwd, command):
     command = re.sub(r"/(?:\./)+|//+", "/", command)
     names = {str(path), str(path.resolve())}
     alternatives = [re.escape(name) for name in names]
-    for base, prefix in (
-        (cwd, r"(?<![/~])(?:\./)?"),
-        (Path.home(), r"(?:~|\$HOME|\$\{HOME\})[\x22\x27]?/"),
-        (home, r"\$(?:HERMES_HOME|\{HERMES_HOME\})[\x22\x27]?/"),
-    ):
+    task_prefix = r"(?<![/~])(?:\./)?"
+    home_prefix = r"(?:~|\$HOME|\$\{HOME\})[\x22\x27]?/"
+    profile_variable = r"\$(?:HERMES_HOME|\{HERMES_HOME\})"
+    bases = [(cwd, task_prefix), (Path.home(), home_prefix), (home, profile_variable + r"[\x22\x27]?/")]
+    profile_names = {re.escape(str(home)), re.escape(str(home.resolve())), profile_variable}
+    for base in {Path.home(), Path.home().resolve()}:
+        profile_names.add(home_prefix + re.escape(os.path.relpath(home, base)))
+    profile = "|".join(sorted(profile_names))
+    if re.search(rf"(?:^|[;&|])\s*cd\s+(?:--\s+)?['\x22]?(?:{profile})['\x22]?\s*(?:[;&|]|\n)", command):
+        bases.append((home, task_prefix))
+    for base, prefix in bases:
         for base_path in {base, base.resolve()}:
             for name in names:
-                relative = os.path.relpath(name, base_path)
-                if not relative.startswith("../"):
-                    alternatives.append(prefix + re.escape(relative))
+                alternatives.append(prefix + re.escape(os.path.relpath(name, base_path)))
     return any(_whole(pattern, command) for pattern in alternatives)
 
 
