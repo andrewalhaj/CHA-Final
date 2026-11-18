@@ -9,7 +9,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 PLUGIN = Path(__file__).resolve().parents[1] / "custom_build"
 QUESTION = "What did we decide about the backup?"
@@ -21,6 +21,7 @@ EMPTY_SESSION = {"success": True, "results": []}
 def scenario():
     from agent.turn_context import _collect_pre_llm_call_context
     from agent.turn_finalizer import apply_llm_output_transform
+    from hermes_cli.lifecycle import invoke_hook
     from hermes_cli.plugins import discover_plugins, get_plugin_manager
     from model_tools import _emit_post_tool_call_hook
 
@@ -74,6 +75,12 @@ def scenario():
     ):
         arm(turn, message, platform)
         outcomes[turn] = reply(turn)
+    if active:
+        with patch.object(active, "TURNS_KEPT", 1):
+            arm("abandoned", QUESTION, "cli")
+            invoke_hook("on_session_end", turn_id="abandoned", completed=False, interrupted=True)
+            arm("next", QUESTION, "cli")
+            outcomes["next"] = reply("next")
     outcomes["codes"] = sorted({args[1] for args, _ in recorder.call_args_list}) if recorder else []
     return outcomes
 
@@ -102,7 +109,7 @@ class RecallGateTests(unittest.TestCase):
         self.assertTrue(outcome["held"])
         for case in ("both", "ordinary", "subagent"):
             self.assertEqual(outcome[case], ANSWER)
-        for case in ("none", "memory-only", "memory-error", "session-error", "blocked", "stale", "parts", "open"):
+        for case in ("none", "memory-only", "memory-error", "session-error", "blocked", "stale", "parts", "open", "next"):
             with self.subTest(case=case):
                 self.assertIn("Recall gate withheld", outcome[case])
         self.assertIn("session_search", outcome["memory-only"])
