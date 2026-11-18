@@ -1,0 +1,42 @@
+# Synthetic explicit memories, seeded in this order. Unique single-line bodies identify returned fixture IDs.
+[[facts]]
+id = "blue-compass"
+body = "The blue brass compass belongs to the navigator."
+
+[[facts]]
+id = "spare-compass"
+body = "The spare brass compass is in the storage chest."
+
+[[facts]]
+id = "harbor-ledger"
+project = "harbor"
+body = "The tide ledger for harbor inspections is on the first shelf."
+
+[[facts]]
+id = "unscoped-ledger"
+body = "The tide ledger for general training is on the second shelf."
+
+[[cases]]
+id = "ranked-compass"
+query = "brass compasses"
+expected = "blue-compass"
+
+[[cases]]
+id = "project-scope"
+project = "harbor"
+query = "tide ledger"
+expected = "harbor-ledger"
+
+[[cases]]
+id = "wrong-project"
+project = "lighthouse"
+query = "tide ledger"
+
+[[cases]]
+id = "absent-note"
+query = "penguins"
+
+[[cases]]
+id = "paraphrase"
+query = "navigation instrument"
+expected = "blue-compass"

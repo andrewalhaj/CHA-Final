@@ -16,6 +16,22 @@ Run `python -m scripts.import_legacy --project-map <file>` from the repo with th
 
 The rehearsal carries over the current body and resolved project of a live fact in legacy creation order. The importer redacts each fact body before writing it. Retired and superseded facts and session digests are excluded. Vectors, event history, and session metadata are outside this importer. Verify recall from the matching workspace and from a separate workspace. A production snapshot and cutover require their own verification.
 
+## Lexical recall baseline
+
+Use the pinned Hermes v0.23.1 Python environment and a fresh disposable PostgreSQL database with all CHA
+Final migrations applied. Set `CHA_FINAL_EVAL_DATABASE_URL` in the private environment to the fixture
+database's connection string. From the checkout run:
+
+```sh
+python -B -m evals.lexical
+```
+
+The runner refuses existing data in the CHA Final tables before writing fixture facts. It creates a
+temporary Hermes profile, runs the checked-in synthetic queries and prints JSON to standard output.
+The database and seeded rows are left for the caller's disposable database lifecycle. Supply a fresh
+migrated database for each run, and keep the fixture unchanged for before-and-after comparisons. The
+runner uses no model APIs.
+
 ## 1. Deployment values
 
 These placeholders appear in the documentation. Each deployment sets them in its Hermes profile's `.env` or its own configuration management, never in this repository.

@@ -256,6 +256,23 @@ Secrets are redacted before anything is stored or sent.
 
 No ranking change ships without numbers from the eval set.
 
+**CHA Final lexical baseline.** [The synthetic fixture](evals/lexical.toml) records explicit facts and one
+expected fact ID or an abstention per case. [The runner](evals/lexical.py) seeds an empty migrated
+disposable database, then loads the plugin with Hermes v0.23.1 and calls its provider's `prefetch()` in a
+new session per case. The JSON report identifies the Hermes commit and fixture SHA-256, and gives
+the returned fact IDs, Recall@5, mean reciprocal rank (MRR), correct abstentions and named recall failures. Fixture text is
+unique across scopes, so each delivered note maps back to one fact ID. Recall failures get zero credit
+and make the run exit nonzero.
+
+The initial five cases gave Recall@5 **0.6667** (two of three answerable cases), MRR **0.5000**, correct
+abstention **2/2**, and **0** recall failures. The rank-2 lexical case checks order, the scoped case returns
+only its project's note, and the paraphrase case records a current lexical miss. Run the same fixture
+before and after a retrieval change using the procedure in [OPERATIONS.md](OPERATIONS.md#lexical-recall-baseline).
+These numbers establish explicit-fact retrieval on the synthetic fixture. Extraction, session reasoning,
+model answers, and anonymized real misses are outside this baseline.
+
+**LongMemEval and the historical design**
+
 - It starts from LongMemEval-S, which covers information extraction, multi-session reasoning, temporal reasoning, knowledge updates and abstention.[12]
 - It grows from real misses found in the `events` table: open-work questions answered badly, notes from the wrong project, recall that found nothing, and questions whose correct answer is "no note". A miss is promoted by copying it into the eval set; the `events` row itself is not kept.
 - LongMemEval-S is not committed: its data file is about 280 MB. The eval runner downloads the cleaned release's S file at a pinned revision and checks it against a recorded hash before it runs. It is MIT-licensed.[17]
