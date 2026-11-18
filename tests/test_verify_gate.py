@@ -233,6 +233,6 @@ if __name__ == "__main__":
     outcome = _scenario(sys.argv[1])
     if sys.argv[1] != "one-shot":
         for worker in threading.enumerate():
-            if worker.name == "cha-final-verify-event":
+            if worker.name == "cha-final-event":
                 worker.join(timeout=5)
     print(json.dumps(outcome))

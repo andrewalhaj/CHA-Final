@@ -17,7 +17,7 @@ from .memory import project, store
 SOURCE = "custom_build"
 RECALL_TIMEOUT = 6.0
 _RECALL_SLOTS = threading.BoundedSemaphore(4)
-_GUARD_EVENT_SLOTS = threading.BoundedSemaphore(3)
+_EVENT_SLOTS = threading.BoundedSemaphore(3)
 _CONNECT_TIMEOUT = 2
 _STATEMENT_OPTIONS = "-c statement_timeout=3000"
 REDACTION_PATTERNS = (r"sb_secret_[A-Za-z0-9_-]{20,}", r"sb_publishable_[A-Za-z0-9_-]{20,}")
@@ -110,7 +110,8 @@ class CustomBuildProvider(MemoryProvider):
         if tool_name == _MEMORY_SEARCH["name"]:
             query = args.get("query")
             if not isinstance(query, str) or not query.strip():
-                return self._reject_tool("recall.invalid")
+                _record_event("recall.invalid", "failed")
+                return _tool_error("recall.invalid")
             result = self._recall(query)
             return _tool_error(result) if isinstance(result, str) else json.dumps({"matches": result})
 
@@ -159,13 +160,16 @@ class CustomBuildProvider(MemoryProvider):
     def _query_recall(self, query: str, *, connection) -> list[str] | str:
         scope = _project_key()
         try:
-            return store.recall(connection, query, project=scope)
+            matches = store.recall(connection, query, project=scope)
         except QueryCanceled:
             failures.record(connection, "recall.timeout", "failed", source=SOURCE)
             return "recall.timeout"
         except psycopg.OperationalError:
             failures.record(connection, "db.unreachable", "failed", source=SOURCE)
             return "db.unreachable"
+        if not all(isinstance(match, str) for match in matches):
+            raise ValueError("Memory store returned a nontext fact")
+        return matches
 
     @failures.boundary(lambda code: code)
     def _recall(self, query: str) -> list[str] | str:
@@ -211,14 +215,14 @@ def _connect(database_url):
     )
 
 
-def _record_guard_event(code, result, **fields):
-    failures.record(None, code, result, source=SOURCE, defer_write=_schedule_guard_write, **fields)
+def _record_event(code, result, **fields):
+    failures.record(None, code, result, source=SOURCE, defer_write=_schedule_event_write, **fields)
 
 
-def _schedule_guard_write(persist):
-    """Keep the hook off the database path. The recorder has already logged the decision."""
+def _schedule_event_write(persist):
+    """Keep the caller off the database path. The recorder has already logged the event."""
     database_url = get_secret("CHA_FINAL_DATABASE_URL")
-    if not database_url or not _GUARD_EVENT_SLOTS.acquire(blocking=False):
+    if not database_url or not _EVENT_SLOTS.acquire(blocking=False):
         persist(None)
         return
 
@@ -233,12 +237,12 @@ def _schedule_guard_write(persist):
             with connection:
                 persist(connection)
         finally:
-            _GUARD_EVENT_SLOTS.release()
+            _EVENT_SLOTS.release()
 
     try:
-        spawn_context_thread(write, name="cha-final-verify-event").start()
+        spawn_context_thread(write, name="cha-final-event").start()
     except RuntimeError:
-        _GUARD_EVENT_SLOTS.release()
+        _EVENT_SLOTS.release()
         persist(None)
 
 
@@ -253,4 +257,4 @@ def register(ctx) -> None:
     from .guards import verify_gate
 
     heartbeat.register(ctx)
-    verify_gate.register(ctx, _record_guard_event)
+    verify_gate.register(ctx, _record_event)
