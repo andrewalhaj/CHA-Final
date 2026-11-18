@@ -83,6 +83,10 @@ class ProviderBoundaryTests(unittest.TestCase):
         self.assertIn("unhandled", diagnostics)
         self.assertNotIn(payload, diagnostics)
         self.assertNotIn(payload, response)
+        connection.execute.assert_called_once()
+        _, values = connection.execute.call_args.args
+        self.assertIn("unhandled", values)
+        self.assertNotIn(payload, repr(values))
 
     def test_explicit_write_from_subagent_does_not_save(self):
         from agent.secret_scope import reset_secret_scope, set_secret_scope
@@ -107,7 +111,27 @@ class ProviderBoundaryTests(unittest.TestCase):
                 reset_secret_scope(token)
 
         save.assert_not_called()
-        self.assertIn("error", json.loads(response))
+        self.assertEqual(json.loads(response), {"error": "store.read_only"})
+        connection.execute.assert_called_once()
+
+    def test_blank_fact_records_rejection_when_store_is_available(self):
+        import custom_build
+
+        provider = custom_build.CustomBuildProvider()
+        provider._database_url = _TEST_DSN
+        connection = MagicMock()
+        connection.__enter__.return_value = connection
+        with (
+            patch("psycopg.connect", return_value=connection),
+            patch.object(custom_build.store, "save") as save,
+            self.assertLogs(custom_build.failures.__name__, level="WARNING") as logs,
+        ):
+            response = provider.handle_tool_call("store_fact", {"fact": " "})
+
+        save.assert_not_called()
+        self.assertEqual(json.loads(response), {"error": "store.invalid"})
+        connection.execute.assert_called_once()
+        self.assertNotIn("events.write_failed", "\n".join(logs.output))
 
     def test_malformed_database_setting_is_reported_before_connecting(self):
         import psycopg
