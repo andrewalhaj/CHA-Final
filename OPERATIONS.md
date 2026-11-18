@@ -112,6 +112,8 @@ Every machine that runs the agent:
 
 ## 4. Scheduled jobs
 
+**CHA Final heartbeat smoke check.** With the current plugin enabled in a disposable profile and the CHA Final migrations applied to its test store, run `hermes custom-build heartbeat`. A successful run exits quietly and appends one `host.heartbeat` row to `cha_final.events` with `result = 'ok'` and `source` equal to the database login. A failed run prints its event code and exits nonzero. The cron wrapper is `custom_build/scripts/custom-build-heartbeat.py`; the job schedule and other jobs below are the deployment reference.
+
 | Job | Runs | What it does | Its own failure |
 |---|---|---|---|
 | Retention | Daily at 03:30 GMT | Deletes `events` rows older than 90 days, except `guard.bypassed` rows; session chunks too, once their table exists. Misses worth keeping are copied into the eval set before then (ARCHITECTURE.md section 3.8). Runs inside the database: a function a migration adds, scheduled by Supabase's `pg_cron`, so no host holds a login that can delete (ARCHITECTURE.md section 4.3). `pg_cron` 1.6.4 is available on the project but not yet installed (#92). | A run records `job.succeeded` naming `retention`; a missing one is `job.missed`. A failed run rolls back, and its error is in `pg_cron`'s run history |
