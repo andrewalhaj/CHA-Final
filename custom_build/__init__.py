@@ -194,10 +194,14 @@ def _connect(database_url):
 
 
 def _record_guard_event(code, result, **fields):
-    """Log the decision and record it without keeping a Hermes hook waiting on the store."""
+    failures.record(None, code, result, source=SOURCE, defer_write=_schedule_guard_write, **fields)
+
+
+def _schedule_guard_write(persist):
+    """Keep the hook off the database path. The recorder has already logged the decision."""
     database_url = get_secret("CHA_FINAL_DATABASE_URL")
     if not database_url or not _GUARD_EVENT_SLOTS.acquire(blocking=False):
-        failures.record(None, code, result, source=SOURCE, **fields)
+        persist(None)
         return
 
     @failures.boundary(lambda code: None)
@@ -206,10 +210,10 @@ def _record_guard_event(code, result, **fields):
             try:
                 connection = _connect(database_url)
             except (psycopg.OperationalError, psycopg.ProgrammingError):
-                failures.record(None, code, result, source=SOURCE, **fields)
+                persist(None)
                 return
             with connection:
-                failures.record(connection, code, result, source=SOURCE, **fields)
+                persist(connection)
         finally:
             _GUARD_EVENT_SLOTS.release()
 
@@ -217,7 +221,7 @@ def _record_guard_event(code, result, **fields):
         spawn_context_thread(write, name="cha-final-verify-event").start()
     except RuntimeError:
         _GUARD_EVENT_SLOTS.release()
-        failures.record(None, code, result, source=SOURCE, **fields)
+        persist(None)
 
 
 def register(ctx) -> None:

@@ -57,8 +57,9 @@ def record(
     source: str,
     diagnostic: Exception | None = None,
     reason: str | None = None,
-) -> bool:
-    """Log and attempt an insert, returning whether it succeeded.
+    defer_write=None,
+) -> bool | None:
+    """Log first, then insert and return its success, or schedule the same insert and return None.
 
     The caller supplies a configured source label and owns the transaction.
     """
@@ -81,11 +82,18 @@ def record(
             for frame, line in walk_tb(diagnostic.__traceback__)
         ]
     logger.log(logging.INFO if result == "ok" else logging.WARNING, "%s", json.dumps(fields))
+    values = (source, code, result, reason)
+    if defer_write is not None:
+        defer_write(lambda connection: _persist(connection, values))
+        return None
+    return _persist(conn, values)
+
+
+def _persist(conn, values):
+    source, code, _, _ = values
     if conn is None:
         return _write_failed(source, code)
-
     statement = "INSERT INTO cha_final.events (source, code, result, reason) VALUES (%s, %s, %s, %s)"
-    values = (source, code, result, reason)
     try:
         conn.execute(statement, values)
     except (OperationalError, InFailedSqlTransaction, InsufficientPrivilege, ReadOnlySqlTransaction):

@@ -1,7 +1,6 @@
 """Prove the verify gate with the pinned Hermes tool and reply dispatchers."""
 
 import json
-import logging
 import os
 import shutil
 import subprocess
@@ -25,10 +24,11 @@ CLAIM = "The MEMORY.md contains a synthetic assertion."
 def _scenario(mode):
     from agent.turn_finalizer import apply_llm_output_transform
     from hermes_cli.plugins import discover_plugins, get_plugin_manager
+    from hermes_logging import setup_logging
     from model_tools import _emit_post_tool_call_hook, handle_function_call
 
     home = Path(os.environ["HERMES_HOME"])
-    logging.getLogger().setLevel(logging.INFO)
+    setup_logging(hermes_home=home)
     discover_plugins()
     manager = get_plugin_manager()
     loaded = next(plugin for plugin in manager.list_plugins() if plugin["name"] == "custom_build")
@@ -122,6 +122,8 @@ def _scenario(mode):
     result["write_after_background_start"] = terminal_hook("touch .env")
     terminal_hook('cd "$HERMES_HOME" && cd memories && cat .env', workdir=home.parent, completed=foreground)
     result["write_after_ambiguous_cwd"] = terminal_hook("touch .env")
+    terminal_hook('cd "$HERMES_HOME"; cat .env', workdir=home.parent, completed=foreground)
+    result["write_after_unconditional_cwd"] = terminal_hook("touch .env")
     terminal_hook('cd "$HERMES_HOME" && cat .env', workdir=home.parent, completed=foreground)
     result["write_after_foreground"] = terminal_hook("touch .env")
     result["setting_unread"] = terminal_hook('hermes config set "memory.provider" custom_build')
@@ -153,8 +155,9 @@ class VerifyGateTests(unittest.TestCase):
                 [sys.executable, "-B", __file__, mode], cwd=scratch, env=env,
                 capture_output=True, text=True, timeout=30, check=False,
             )
+            log = (home / "logs" / "agent.log").read_text(encoding="utf-8")
         self.assertEqual(completed.returncode, 0, completed.stderr)
-        return json.loads(completed.stdout.splitlines()[-1]), completed.stderr
+        return json.loads(completed.stdout.splitlines()[-1]), log
 
     def test_enforcement_blocks_unread_changes_and_holds_claims(self):
         result, log = self._run("on")
@@ -183,7 +186,8 @@ class VerifyGateTests(unittest.TestCase):
         result, _ = self._run("on")
         for case in ("terminal_unread", "terminal_cd", "terminal_parent_relative", "terminal_stdout",
                      "terminal_combined_stdout", "write_after_redirect", "write_after_yield",
-                     "write_after_background_start", "write_after_ambiguous_cwd", "setting_unread",
+                     "write_after_background_start", "write_after_ambiguous_cwd", "write_after_unconditional_cwd",
+                     "setting_unread",
                      "setting_failed_read", "setting_after_show_summary"):
             with self.subTest(case=case):
                 self.assertEqual([item["action"] for item in result[case]], ["block"])
@@ -207,7 +211,7 @@ class VerifyGateTests(unittest.TestCase):
     def test_guard_decision_is_logged_before_a_one_shot_process_can_exit(self):
         result, log = self._run("one-shot", "dbname=disposable")
         self.assertTrue(result["changed"]["success"])
-        self.assertIn("verify_gate.would_block", log)
+        self.assertIn('"code": "verify_gate.would_block"', log)
 
     @unittest.skipUnless(os.environ.get("CHA_FINAL_TEST_DATABASE_URL"), "requires disposable PostgreSQL")
     def test_decision_events_reach_the_existing_store(self):
