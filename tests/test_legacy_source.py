@@ -74,6 +74,8 @@ class LegacySourceTests(unittest.TestCase):
 
     def check_snapshot(self, database_url):
         first, second, third, retired, superseded, digest = [UUID(int=value) for value in range(1, 7)]
+        url_token = "fixture-url-credential"
+        url = f"https://example.invalid/docs?access_token={url_token}&page=2"
         with psycopg.connect(database_url) as conn:
             conn.execute("create schema memory")
             conn.execute(
@@ -90,7 +92,7 @@ class LegacySourceTests(unittest.TestCase):
                 cursor.executemany(
                     "insert into memory.fixture_facts values (%s, %s, %s, %s, %s, %s, %s)",
                     [
-                        (third, "Third", "legacy-scope", "fact", "2025-01-02", None, None),
+                        (third, f"Third {url}", "legacy-scope", "fact", "2025-01-02", None, None),
                         (second, f"Second {PRIVATE_TOKEN}", "legacy-scope", "fact", "2025-01-02", None, None),
                         (first, "First", None, "fact", "2025-01-01", None, None),
                         (retired, "Retired", "unused-retired", "fact", "2025-01-01", "2025-01-02", None),
@@ -115,4 +117,6 @@ class LegacySourceTests(unittest.TestCase):
         self.assertEqual(result[0][1], "First")
         self.assertTrue(result[1][1].startswith("Second "))
         self.assertNotIn(PRIVATE_TOKEN, result[1][1])
-        self.assertEqual(result[2][1], "Third")
+        self.assertTrue(result[2][1].startswith("Third https://example.invalid/docs?"))
+        self.assertIn("page=2", result[2][1])
+        self.assertNotIn(url_token, result[2][1])
