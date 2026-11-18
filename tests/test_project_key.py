@@ -84,6 +84,17 @@ class ProjectKeyTests(unittest.TestCase):
                 expected = hashlib.sha256(canonical.encode()).hexdigest()
                 self.assertEqual(self.project.key(repo), expected)
 
+    def test_scp_percent_escapes_are_literal_paths(self):
+        repo = self.repo("work")
+        self.git(repo, "config", "remote.origin.url", "git@git.example:/srv/project%20one.git")
+        literal_path_key = self.project.key(repo)
+        self.git(repo, "config", "remote.origin.url", "ssh://git@git.example/srv/project%20one.git")
+        with self.subTest("URL escape addresses a space"):
+            self.assertNotEqual(self.project.key(repo), literal_path_key)
+        self.git(repo, "config", "remote.origin.url", "ssh://git@git.example/srv/project%2520one.git")
+        with self.subTest("URL escape addresses the literal percent"):
+            self.assertEqual(self.project.key(repo), literal_path_key)
+
     def test_unknown_network_transport_raises_instead_of_selecting_unscoped_memory(self):
         repo = self.repo("work")
         self.git(repo, "config", "remote.origin.url", "custom://git.example/Team/Project")
