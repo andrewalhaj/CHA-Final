@@ -68,16 +68,35 @@ class LegacyImportTests(unittest.TestCase):
         self.assertEqual(self.conn.execute("select count(*) from cha_final.facts").fetchone(), (3,))
         self.assertEqual(self.conn.execute("select count(*) from cha_final.project_facts").fetchone(), (1,))
 
-    def test_refuses_an_uninitialized_target_with_facts_in_either_scope(self):
+    def _assert_refuses_committed_fact(self, project):
         from custom_build.memory import legacy_import, store
 
-        for project in (None, "project-a"):
-            with self.subTest(project=project), self.conn.transaction(force_rollback=True):
-                store.save(self.conn, "Legacy snapshot live", project=project)
-                with self.assertRaisesRegex(legacy_import.LegacyImportError, "already contains facts"):
-                    legacy_import.apply_snapshot(self.conn, SNAPSHOT)
-                self.assertEqual(store.recall(self.conn, "legacy snapshot", project=project), ["Legacy snapshot live"])
-                self.assertEqual(self.conn.execute("select count(*) from cha_final.legacy_import").fetchone(), (0,))
+        store.save(self.conn, "Legacy snapshot live", project=project)
+        with self.assertRaisesRegex(legacy_import.LegacyImportError, "already contains facts"):
+            legacy_import.apply_snapshot(self.conn, SNAPSHOT)
+        self.assertEqual(store.recall(self.conn, "legacy snapshot", project=project), ["Legacy snapshot live"])
+        self.assertEqual(self.conn.execute("select count(*) from cha_final.legacy_import").fetchone(), (0,))
+
+    def test_refuses_uninitialized_target_with_projectless_fact(self):
+        self._assert_refuses_committed_fact(None)
+
+    def test_refuses_uninitialized_target_with_scoped_fact(self):
+        self._assert_refuses_committed_fact("project-a")
+
+    def test_refuses_a_target_connection_with_a_stale_snapshot(self):
+        import psycopg
+
+        from custom_build.memory import legacy_import, store
+
+        with self.conn.transaction():
+            self.conn.execute("set transaction isolation level repeatable read")
+            self.assertEqual(self.conn.execute("select count(*) from cha_final.facts").fetchone(), (0,))
+            with psycopg.connect(self.database_url) as writer:
+                store.save(writer, "Runtime fact committed after the snapshot")
+            with self.assertRaisesRegex(legacy_import.LegacyImportError, "must be idle"):
+                legacy_import.apply_snapshot(self.conn, SNAPSHOT)
+        self.assertEqual(self.conn.execute("select count(*) from cha_final.facts").fetchone(), (1,))
+        self.assertEqual(self.conn.execute("select count(*) from cha_final.legacy_import").fetchone(), (0,))
 
     def test_failed_insert_rolls_back_the_snapshot_and_allows_retry(self):
         import psycopg
