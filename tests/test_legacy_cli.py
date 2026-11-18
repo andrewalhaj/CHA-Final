@@ -50,3 +50,15 @@ class LegacyCLITests(unittest.TestCase):
         self.assertEqual(result.returncode, 1, result.stderr)
         self.assertEqual(json.loads(result.stdout), {"error": "legacy.mapping_invalid"})
         self.assertNotIn(marker, result.stdout + result.stderr)
+
+    def test_unrecognized_arguments_do_not_echo_secrets(self):
+        marker = "private-synthetic-connection-url"
+        result = self._run("{}", marker)
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(json.loads(result.stdout), {"error": "legacy.arguments_invalid"})
+        self.assertNotIn(marker, result.stdout + result.stderr)
+
+    def test_apply_flag_cannot_be_abbreviated(self):
+        result = self._run("{}", "--a")
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(json.loads(result.stdout), {"error": "legacy.arguments_invalid"})
