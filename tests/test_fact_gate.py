@@ -21,6 +21,35 @@ DIAGNOSIS = "The root cause is an expired lease."
 PROCEDURE = "1. Open the page.\n2. Check the version."
 
 
+def _finalize(turn, held, *, response="", interrupted=False):
+    from agent.turn_finalizer import (
+        _SESSION_COST_KEYS,
+        _SESSION_TOKEN_KEYS,
+        finalize_turn,
+    )
+
+    def no_op(*args, **kwargs):
+        pass
+
+    agent = SimpleNamespace(
+        session_id="session", model="test", provider="test", base_url="", platform="cli",
+        _hold_stream=bool(held), _held_transforms=held, max_iterations=2,
+        iteration_budget=SimpleNamespace(remaining=1, used=1, max_total=2),
+        context_compressor=SimpleNamespace(last_prompt_tokens=0),
+        _tool_guardrail_halt_decision=None, _skill_nudge_interval=0, _interrupt_message=None,
+        _save_trajectory=no_op, _cleanup_task_resources=no_op, _persist_session=no_op,
+        _drop_trailing_empty_response_scaffolding=no_op, _drain_pending_steer=no_op, clear_interrupt=no_op,
+        _sync_external_memory_for_turn=no_op, _turn_completion_explainer_enabled=lambda: False,
+        **{f"session_{field}": 0 for field in (*_SESSION_COST_KEYS, *_SESSION_TOKEN_KEYS)},
+    )
+    return finalize_turn(
+        agent, final_response=response, api_call_count=1, interrupted=interrupted, failed=False,
+        messages=[{"role": "user", "content": QUESTION}], conversation_history=None,
+        effective_task_id=f"task-{turn}", turn_id=turn, user_message=QUESTION, original_user_message=QUESTION,
+        _should_review_memory=False, _turn_exit_reason="interrupted_by_user" if interrupted else "text_response(test)",
+    )["final_response"]
+
+
 def _scenario(mode):
     from agent.turn_context import _collect_pre_llm_call_context
     from agent.turn_finalizer import apply_llm_output_transform
@@ -61,6 +90,19 @@ def _scenario(mode):
         )
 
     detector = next((m for name, m in sys.modules.items() if name.endswith("custom_build.guards.fact_gate")), None)
+    if mode == "lifecycle":
+        with patch.object(detector, "TURNS_KEPT", 2):
+            arm("in-flight")
+            read("in-flight")
+            terminal = []
+            for index, interrupted in enumerate((False, True, False)):
+                turn = f"blank-{index}"
+                _, blocks = arm(turn)
+                terminal.append([blocks, _finalize(turn, held, interrupted=interrupted)])
+            _, blocks = arm("after-blanks")
+            return {"terminal": terminal, "new_blocks": blocks,
+                    "unverified": _finalize("after-blanks", held, response=ANSWER),
+                    "verified": _finalize("in-flight", held, response=ANSWER)}
     recorder = None
     if detector is not None:
         # The disposable process keeps real persistence/fallback behavior under this spy.
@@ -134,7 +176,8 @@ class FactGateTests(unittest.TestCase):
             home = Path(scratch)
             plugin = home / "plugins" / "custom_build"
             shutil.copytree(PLUGIN, plugin, ignore=shutil.ignore_patterns("__pycache__"))
-            for path, gate_mode in ((CONFIG, mode), (VERIFY_CONFIG, verify_mode)):
+            fact_mode = "on" if mode == "lifecycle" else mode
+            for path, gate_mode in ((CONFIG, fact_mode), (VERIFY_CONFIG, verify_mode)):
                 config = plugin / path
                 if config.exists() and gate_mode != "log":
                     settings = config.read_text(encoding="utf-8").replace('mode = "log"', f'mode = "{gate_mode}"')
@@ -191,6 +234,13 @@ class FactGateTests(unittest.TestCase):
         self.assertFalse(any(event["code"].startswith("fact_gate.") for event in outcomes["decisions"]))
         self.assertNotIn('"code": "fact_gate.', log)
 
+
+    def test_blank_and_interrupted_finalizers_retire_only_their_own_turn(self):
+        outcomes, log = self._run("lifecycle")
+        self.assertEqual(outcomes["terminal"], [[[], ""]] * 3, log)
+        self.assertEqual(outcomes["new_blocks"], [], log)
+        self.assertIn("withheld", outcomes["unverified"])
+        self.assertEqual(outcomes["verified"], ANSWER)
 
     def test_mixed_modes_enforce_and_record_each_gates_decision(self):
         for mode, verify_mode, enforcing_gate, observed in (
