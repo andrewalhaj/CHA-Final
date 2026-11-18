@@ -1,7 +1,6 @@
 """Exercise the fact gate with Hermes's pinned pre-turn, tool, and reply dispatchers."""
 
 import json
-import logging
 import os
 import shutil
 import subprocess
@@ -10,11 +9,12 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 ROOT = Path(__file__).resolve().parents[1]
 PLUGIN = ROOT / "custom_build"
 CONFIG = Path("guards/fact_gate.toml")
+VERIFY_CONFIG = Path("guards/verify_gate.toml")
 QUESTION = "How many entries are in the synthetic inventory?"
 ANSWER = "There are 42 synthetic entries."
 DIAGNOSIS = "The root cause is an expired lease."
@@ -27,7 +27,6 @@ def _scenario(mode):
     from hermes_cli.plugins import discover_plugins, get_plugin_manager
     from model_tools import _emit_post_tool_call_hook, handle_function_call
 
-    logging.getLogger().setLevel(logging.INFO)
     discover_plugins()
     plugins = get_plugin_manager()
     entry = next(plugin for plugin in plugins.list_plugins() if plugin["name"] == "custom_build")
@@ -41,7 +40,7 @@ def _scenario(mode):
         agent = SimpleNamespace(session_id="session", model="test", platform=platform, _persist_disabled=False)
         blocks = []
         context = _collect_pre_llm_call_context(
-            agent, effective_task_id="test", turn_id=turn, original_user_message=message,
+            agent, effective_task_id=f"task-{turn}", turn_id=turn, original_user_message=message,
             messages=[], conversation_history=[], blocks=blocks,
         )
         return context, blocks
@@ -53,16 +52,34 @@ def _scenario(mode):
         return apply_llm_output_transform(agent, value, turn_id=turn)[0]
 
     def read(turn, path=document, *, session="session"):
-        handle_function_call("read_file", {"path": str(path)}, task_id="test", session_id=session, turn_id=turn)
+        handle_function_call("read_file", {"path": str(path)}, task_id=f"task-{turn}", session_id=session, turn_id=turn)
 
     def post(turn, tool, result, *, status=None):
         _emit_post_tool_call_hook(
             function_name=tool, function_args={}, result=json.dumps(result),
-            task_id="test", session_id="session", turn_id=turn, status=status,
+            task_id=f"task-{turn}", session_id="session", turn_id=turn, status=status,
         )
 
     detector = next((m for name, m in sys.modules.items() if name.endswith("custom_build.guards.fact_gate")), None)
-    outcomes = {"held": bool(held), "reminder": arm("bare"), "missing": reply("bare")}
+    recorder = None
+    if detector is not None:
+        # The disposable process keeps real persistence/fallback behavior under this spy.
+        recorder = Mock(wraps=detector.failures.record)
+        detector.failures.record = recorder
+    def decisions():
+        if recorder is None:
+            return []
+        return [
+            {"code": args[1], "reason": fields.get("reason")}
+            for args, fields in recorder.call_args_list
+            if args[1].startswith(("fact_gate.", "verify_gate.")) or args[1] == "guard.crash"
+        ]
+
+    arm("managed")
+    managed = reply("managed", "MEMORY.md contains a synthetic assertion.")
+    managed_decisions = decisions()
+    outcomes = {"held": bool(held), "reminder": arm("bare"), "missing": reply("bare"), "managed": managed,
+                "managed_decisions": managed_decisions}
     if detector is not None and mode != "off":
         with patch.object(detector, "flatten_message_text", side_effect=ValueError("private detector failure")):
             outcomes["crash"] = arm("failed-arm")
@@ -73,7 +90,7 @@ def _scenario(mode):
 
     cases = {
         "checked": (lambda: read("checked", session="rotated"), ANSWER),
-        "stale": (lambda: read("checked"), ANSWER),
+        "stale": (lambda: read("earlier-turn"), ANSWER),
         "failed": (lambda: read("failed", home / "missing"), ANSWER),
         "blocked": (lambda: post("blocked", "read_file", {}, status="blocked"), ANSWER),
         "terminal-pending": (lambda: post("terminal-pending", "terminal", {"exit_code": 0, "session_id": "bg"}), ANSWER),
@@ -107,19 +124,21 @@ def _scenario(mode):
     }.items():
         arm(rule, message)
         reply(rule)
+    outcomes["decisions"] = decisions()
     return outcomes
 
 
 class FactGateTests(unittest.TestCase):
-    def _run(self, mode):
+    def _run(self, mode, *, verify_mode="log"):
         with tempfile.TemporaryDirectory(prefix="cha-fact-") as scratch:
             home = Path(scratch)
             plugin = home / "plugins" / "custom_build"
             shutil.copytree(PLUGIN, plugin, ignore=shutil.ignore_patterns("__pycache__"))
-            config = plugin / CONFIG
-            if config.exists() and mode != "log":
-                settings = config.read_text(encoding="utf-8").replace('mode = "log"', f'mode = "{mode}"')
-                config.write_text(settings, encoding="utf-8")
+            for path, gate_mode in ((CONFIG, mode), (VERIFY_CONFIG, verify_mode)):
+                config = plugin / path
+                if config.exists() and gate_mode != "log":
+                    settings = config.read_text(encoding="utf-8").replace('mode = "log"', f'mode = "{gate_mode}"')
+                    config.write_text(settings, encoding="utf-8")
             (home / "config.yaml").write_text("plugins:\n  enabled: [custom_build]\n", encoding="utf-8")
             completed = subprocess.run(
                 [sys.executable, "-B", __file__, mode], cwd=scratch,
@@ -130,7 +149,7 @@ class FactGateTests(unittest.TestCase):
         return json.loads(completed.stdout.splitlines()[-1]), completed.stderr
 
     def test_on_mode_holds_only_unverified_checkable_replies(self):
-        outcomes, log = self._run("on")
+        outcomes, _ = self._run("on")
         self.assertTrue(outcomes["held"])
         self.assertIn("lookup", outcomes["reminder"][0].lower())
         self.assertEqual(outcomes["reminder"][1], [])
@@ -147,7 +166,7 @@ class FactGateTests(unittest.TestCase):
         self.assertEqual(outcomes["documented"], DIAGNOSIS)
         self.assertIn("guard.crash", outcomes["crash"][1][0])
         self.assertIn("guard.crash", outcomes["crash_reply"])
-        self.assertIn('"code": "fact_gate.withheld"', log)
+        self.assertIn("fact_gate.withheld", {event["code"] for event in outcomes["decisions"]})
 
     def test_default_log_records_decisions_without_changing_the_turn(self):
         outcomes, log = self._run("log")
@@ -155,21 +174,35 @@ class FactGateTests(unittest.TestCase):
         self.assertEqual(outcomes["reminder"], ["", []])
         self.assertEqual(outcomes["missing"], ANSWER)
         self.assertEqual(outcomes["diagnosis"], DIAGNOSIS)
-        for code in ("fact_gate.armed", "fact_gate.would_withhold", "fact_gate.passed", "guard.crash"):
-            self.assertIn(f'"code": "{code}"', log)
+        decisions = [event for event in outcomes["decisions"] if not event["code"].startswith("verify_gate.")]
+        self.assertEqual({event["code"] for event in decisions},
+                         {"fact_gate.armed", "fact_gate.would_withhold", "fact_gate.passed", "guard.crash"})
         self.assertEqual(outcomes["crash"], ["", []])
         self.assertEqual(outcomes["crash_reply"], ANSWER)
-        decisions = [json.loads(line) for line in log.splitlines() if line.startswith("{")]
         armed_by = {event["reason"] for event in decisions if event["code"] == "fact_gate.armed"}
         self.assertEqual(armed_by, {"version", "location", "state", "value", "count", "support", "date", "error"})
         for private in (QUESTION, ANSWER, "private detector failure", "private transform failure", "failed-arm"):
-            self.assertNotIn(private, log)
+            self.assertNotIn(private, log + json.dumps(decisions))
 
     def test_off_neither_holds_nor_records(self):
         outcomes, log = self._run("off")
         self.assertFalse(outcomes["held"])
         self.assertEqual(outcomes["missing"], ANSWER)
+        self.assertFalse(any(event["code"].startswith("fact_gate.") for event in outcomes["decisions"]))
         self.assertNotIn('"code": "fact_gate.', log)
+
+
+    def test_mixed_modes_enforce_and_record_each_gates_decision(self):
+        for mode, verify_mode, enforcing_gate, observed in (
+            ("on", "log", "Fact", {"fact_gate.withheld", "verify_gate.would_withhold"}),
+            ("log", "on", "Verify", {"verify_gate.withheld", "fact_gate.would_withhold"}),
+        ):
+            with self.subTest(mode=mode, verify_mode=verify_mode):
+                outcomes, _ = self._run(mode, verify_mode=verify_mode)
+                self.assertTrue(outcomes["held"])
+                self.assertIn(f"{enforcing_gate} gate withheld", outcomes["managed"])
+                self.assertEqual({event["code"] for event in outcomes["managed_decisions"]},
+                                 {"fact_gate.armed", *observed})
 
 
 if __name__ == "__main__":

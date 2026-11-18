@@ -3,6 +3,7 @@ version: 0.1.0
 kind: standalone
 description: Save explicit facts and recall them from PostgreSQL.
 provides_hooks:
+  - pre_llm_call
   - pre_tool_call
   - post_tool_call
   - transform_llm_output
