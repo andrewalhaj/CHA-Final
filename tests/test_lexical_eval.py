@@ -8,6 +8,8 @@ import unittest
 
 from pathlib import Path
 
+import test_hermes_explicit_memory as hermes
+
 
 ROOT = Path(__file__).resolve().parents[1]
 TEST_DATABASE_URL = os.environ.get("CHA_FINAL_TEST_DATABASE_URL")
@@ -24,12 +26,17 @@ class LexicalEvalTests(unittest.TestCase):
             {"status": "failed", "code": "db.unreachable", "fact_ids": []},
         )
 
-    @unittest.skipUnless(TEST_DATABASE_URL, "set CHA_FINAL_TEST_DATABASE_URL to disposable PostgreSQL")
-    def test_pinned_provider_runs_the_checked_in_lexical_baseline(self):
-        completed = subprocess.run(
+    def _run(self, url):
+        return subprocess.run(
             [sys.executable, "-B", "-m", "evals.lexical"], cwd=ROOT, text=True,
             capture_output=True, check=False, timeout=30,
+            env={"PATH": os.defpath, "CHA_FINAL_EVAL_DATABASE_URL": url},
         )
+
+    @unittest.skipUnless(TEST_DATABASE_URL, "set CHA_FINAL_TEST_DATABASE_URL to disposable PostgreSQL")
+    def test_pinned_provider_runs_the_checked_in_lexical_baseline(self):
+        with hermes.HermesExplicitMemoryTests()._database() as url:
+            completed = self._run(url)
         self.assertEqual(completed.returncode, 0, completed.stderr)
         report = json.loads(completed.stdout)
         cases = report["cases"]
@@ -43,3 +50,20 @@ class LexicalEvalTests(unittest.TestCase):
         self.assertEqual(report["recall_at_5"], 0.6667)
         self.assertEqual(report["mrr"], 0.5)
         self.assertEqual(report["abstention"], {"correct": 2, "total": 2})
+
+    @unittest.skipUnless(TEST_DATABASE_URL, "set CHA_FINAL_TEST_DATABASE_URL to disposable PostgreSQL")
+    def test_nonempty_fixture_is_rejected_before_any_facts_are_written(self):
+        import psycopg
+
+        with hermes.HermesExplicitMemoryTests()._database() as url:
+            with psycopg.connect(url) as conn:
+                conn.execute(
+                    "insert into cha_final.project_facts (project, body) values ('existing', 'Existing fact')"
+                )
+            completed = self._run(url)
+            self.assertNotEqual(completed.returncode, 0)
+            self.assertIn("The eval database must have an empty cha_final schema", completed.stderr)
+            with psycopg.connect(url) as conn:
+                self.assertEqual(conn.execute("select body from cha_final.project_facts").fetchall(),
+                                 [("Existing fact",)])
+                self.assertEqual(conn.execute("select count(*) from cha_final.facts").fetchone(), (0,))
