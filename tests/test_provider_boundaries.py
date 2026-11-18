@@ -151,3 +151,31 @@ class ProviderBoundaryTests(unittest.TestCase):
         connect.assert_not_called()
         self.assertIn("config.missing", note)
         self.assertNotIn("synthetic invalid connection setting", "\n".join(logs.output))
+
+    def test_unavailable_session_workspace_cannot_fall_back_to_another_project(self):
+        from agent.runtime_cwd import reset_session_cwd, set_session_cwd
+
+        import custom_build
+
+        provider = custom_build.CustomBuildProvider()
+        provider._database_url = _TEST_DSN
+        connection = MagicMock()
+        connection.__enter__.return_value = connection
+        with (
+            tempfile.TemporaryDirectory(prefix="cha-scope-") as home,
+            patch("psycopg.connect", return_value=connection),
+            patch.object(custom_build.store, "save", return_value=1) as save,
+            patch.object(custom_build.store, "recall", return_value=["Another workspace's fact."]) as recall,
+        ):
+            token = set_session_cwd(str(Path(home) / "workspace-not-mounted"))
+            try:
+                response = provider.handle_tool_call("store_fact", {"fact": "A scoped fact."})
+                note = provider.prefetch("workspace fact")
+            finally:
+                reset_session_cwd(token)
+
+        save.assert_not_called()
+        recall.assert_not_called()
+        self.assertEqual(json.loads(response), {"error": "unhandled"})
+        self.assertIn("unhandled", note)
+        self.assertNotIn("Another workspace's fact.", note)
