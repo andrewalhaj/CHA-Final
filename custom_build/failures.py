@@ -20,6 +20,10 @@ REASONS = {
     "recall.timeout": "The memory search exceeded its deadline.",
     "store.invalid": "An explicit fact must be nonempty text.",
     "store.read_only": "Only the primary Hermes session can store an explicit fact.",
+    "legacy.arguments_invalid": "The legacy import arguments are invalid. See --help.",
+    "legacy.mapping_invalid": "The legacy project map could not be read or is invalid.",
+    "legacy.source_invalid": "The legacy snapshot contains an unresolved project association.",
+    "legacy.target_conflict": "The target already contains facts or a different legacy snapshot.",
     "unhandled": "An unexpected memory failure occurred.",
     "events.write_failed": "The failure event could not be written to the store.",
 }
