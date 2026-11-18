@@ -11,7 +11,7 @@ from psycopg.errors import (
     UndefinedTable,
 )
 
-from . import SOURCE, failures
+from . import SOURCE, _connect, failures
 
 
 def _exit_failure(code: str) -> int:
@@ -25,7 +25,19 @@ def _fail(code: str) -> int:
 
 
 def _probe(connection) -> bool:
+    writable, = connection.execute(
+        "select pg_catalog.current_setting('transaction_read_only') = 'off'"
+        " and not pg_catalog.pg_is_in_recovery()",
+    ).fetchone()
+    if not writable:
+        return False
+
     connection.read_only = True
+    with connection.transaction():
+        return _probe_schema(connection)
+
+
+def _probe_schema(connection) -> bool:
     connection.execute("set local statement_timeout = '3s'")
     connection.execute("select id, body from cha_final.facts limit 0")
     connection.execute("select id, project, body from cha_final.project_facts limit 0")
@@ -45,7 +57,7 @@ def run(_args) -> int:
     if cfg_get(load_config_readonly(), "memory", "provider") != SOURCE:
         return _fail("guard.not_loaded")
     provider = load_memory_provider(SOURCE, register_skills=False)
-    if getattr(provider, "name", None) != SOURCE:
+    if getattr(provider, "name", None) != SOURCE or not provider.is_available():
         return _fail("guard.not_loaded")
 
     database_url = (get_secret("CHA_FINAL_DATABASE_URL") or "").strip()
@@ -57,7 +69,7 @@ def run(_args) -> int:
         return _fail("config.missing")
 
     try:
-        connection = psycopg.connect(database_url, connect_timeout=2)
+        connection = _connect(database_url)
     except psycopg.OperationalError:
         return _fail("db.unreachable")
     with connection:
