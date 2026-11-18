@@ -25,7 +25,6 @@ jobs:
           --health-retries 5
     env:
       CHA_FINAL_TEST_DATABASE_URL: postgresql://cha_final_ci:cha_final_ci@127.0.0.1:5432/cha_final_test?connect_timeout=5
-      HERMES_HOME: ${{ runner.temp }}/cha-final-hermes
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
         with: { fetch-depth: 0 }   # the secret scan reads the whole history
@@ -62,6 +61,8 @@ jobs:
           [ "$code" -eq 0 ] || { echo "secret scan: gitleaks found a secret (above, redacted)"; exit "$code"; }
       - name: install pinned runtime and lint dependencies
         run: python -m pip install 'psycopg[binary]==3.3.9' 'ruff==0.17.4' 'pip-audit==2.10.1'
+      - name: use a disposable Hermes home
+        run: printf 'HERMES_HOME=%s\n' "$RUNNER_TEMP/cha-final-hermes" >> "$GITHUB_ENV"
       - name: install pinned Hermes v0.23.1
         shell: bash
         run: |
