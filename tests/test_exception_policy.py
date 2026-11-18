@@ -1,5 +1,6 @@
 """Enforce the repository's catch-all exception policy."""
 
+import ast
 import subprocess
 import unittest
 from pathlib import Path
@@ -7,9 +8,31 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def _is_broad(kind):
+    match kind:
+        case None | ast.Name(id="Exception" | "BaseException"):
+            return True
+        case ast.Attribute(value=ast.Name(id="builtins"), attr="Exception" | "BaseException"):
+            return True
+        case ast.Tuple(elts=items):
+            return any(map(_is_broad, items))
+    return False
+
+
 def broad_handler_lines(path, source):
     """Return line numbers of disallowed handlers."""
-    return []
+    lines = []
+    for statement in ast.parse(source, filename=path).body:
+        if (
+            path == "custom_build/failures.py"
+            and isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and statement.name in {"boundary", "run_job"}
+        ):
+            continue
+        for node in ast.walk(statement):
+            if isinstance(node, ast.ExceptHandler) and _is_broad(node.type):
+                lines.append(node.lineno)
+    return sorted(lines)
 
 
 class ExceptionPolicyTests(unittest.TestCase):
