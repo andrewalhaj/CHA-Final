@@ -94,7 +94,6 @@ def main(argv=None) -> int:
     if target_url is not None:
         try:
             with psycopg.connect(target_url, connect_timeout=5) as target:
-                target.isolation_level = psycopg.IsolationLevel.READ_COMMITTED
                 imported = apply_snapshot(target, rows)
         except LegacyImportError:
             return _failure("legacy.target_conflict")
