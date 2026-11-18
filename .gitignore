@@ -1,0 +1,68 @@
+# Allow-list (CONTRIBUTING.md section 8): everything is ignored unless a line below allows it.
+# A new directory or file type needs a line here first, or git will not show it.
+# tests/test_bootstrap.py proves both directions.
+
+/*
+!/.gitignore
+!/.github/
+!/ARCHITECTURE.md
+!/README.md
+!/AGENTS.md
+!/CONTRIBUTING.md
+!/OPERATIONS.md
+!/pyproject.toml
+!/hermes-requirements.txt
+!/tests/
+!/migrations/
+!/custom_build/
+!/.githooks/
+!/evals/
+!/scripts/
+!/docs/
+
+# The eval runner's code and pinned data reference; never its data file or reports (ARCHITECTURE.md 3.8).
+/evals/*
+!/evals/*.py
+!/evals/*.toml
+
+/.github/*
+!/.github/dependabot.yml
+!/.github/workflows/
+/.github/workflows/*
+!/.github/workflows/*.yml
+
+/tests/*
+!/tests/*.py
+
+/migrations/*
+!/migrations/*.sql
+
+/custom_build/*
+!/custom_build/memory/
+/custom_build/memory/*
+!/custom_build/memory/*.py
+!/custom_build/memory/*.toml
+!/custom_build/memory/embed_reference.json
+!/custom_build/*.py
+!/custom_build/plugin.yaml
+!/custom_build/scripts/
+/custom_build/scripts/*
+!/custom_build/scripts/*.py
+
+/.githooks/*
+!/.githooks/pre-commit
+
+!/custom_build/guards/
+/custom_build/guards/*
+!/custom_build/guards/*.py
+!/custom_build/guards/*.toml
+
+# The operator's deploy script (OPERATIONS.md section 8); never its settings.
+/scripts/*
+!/scripts/*.py
+
+# The README's architecture diagrams, and nothing else under docs/.
+/docs/*
+!/docs/architecture/
+/docs/architecture/*
+!/docs/architecture/*.png
