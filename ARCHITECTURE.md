@@ -54,7 +54,7 @@ Hermes's developer guide says a memory provider can also load as an ordinary plu
 - **Prefetch blocks the turn.** Hermes waits for `prefetch()` for up to 8 seconds, then treats a timeout or an error as "no notes" and carries on. The provider therefore enforces its own deadline below 8 seconds. On failure it returns a "recall failed" note with its failure code instead of raising, because that is the only way the failure reaches the turn.
 - **There is no input for a second query.** `prefetch()` receives only the user's message. The action query (section 3.5) therefore runs from a `pre_llm_call` plugin. Hermes runs `pre_llm_call` before prefetch, bounds it with its own callback timeout (`plugins.hook_callback_timeout`, 30 seconds by default), and skips prefetch entirely for a turn that `pre_llm_call` blocks.[4]
 - **The project key comes from the session's working directory.** Both copies of the code (section 1) read it with Hermes's documented helper, `agent.runtime_cwd.resolve_agent_cwd()`, and turn it into a key the same way.[3][15] `initialize()` receives the directory as `cwd` only when the agent was built with one, and only as it was at that moment, so neither copy relies on it.[3][14] The key comes from the repository, so it is the same on every machine: the normalised URL of the repository's `origin` remote. An absolute path is never used, because it differs between machines. A workspace that is not a repository has no project, and neither has a repository whose `origin` is missing, a local path or a file URL: Hermes v0.23.1 has no per-repository setting that could name one (#112). Neither copy calls `os.getcwd()` itself.
-- **Every entry point goes through one boundary wrapper.** Hermes contains errors from hooks and providers, often silently (section 5.5). Each function Hermes calls is wrapped by a single shared wrapper in the failure module. On an unexpected exception it records the failure, with its traceback in the log (section 6.1), then does what that entry point requires:
+- **Every entry point goes through one boundary wrapper.** Hermes contains errors from hooks and providers, often silently (section 5.5). Each function Hermes calls is wrapped by a single shared wrapper in the failure module. On an unexpected exception it records the failure, with a sanitized diagnostic in the log (section 6.1), then does what that entry point requires:
 
   | Entry point | Recorded as | Then |
   |---|---|---|
@@ -488,7 +488,7 @@ Hermes's memory tool enforces the size limits of `MEMORY.md` and `USER.md` itsel
   Hermes logs the first such error at WARNING and identical repeats at DEBUG, so a guard that keeps failing goes quiet in Hermes's own log.
 
   The plugin developer guide says in general that a hook callback that crashes is logged and skipped.[15] That does not describe `pre_tool_call`: in v0.23.1 a callback that raises or times out there produces a block, and for a raise the block names the callback.[14]
-- **Every enforcing guard fails closed, and every failure is recorded.** Each guard's entry point goes through the boundary wrapper (section 2), which records `guard.crash`, with the traceback in the log, and then re-raises or blocks as the table in section 2 shows. Returning a block from `pre_llm_call` is what Nous recommends for policy hooks.[4] Recording happens in the wrapper on every occurrence, so it does not depend on Hermes logging a repeated error only once.
+- **Every enforcing guard fails closed, and every failure is recorded.** Each guard's entry point goes through the boundary wrapper (section 2), which records `guard.crash`, with a sanitized diagnostic in the log, and then re-raises or blocks as the table in section 2 shows. Returning a block from `pre_llm_call` is what Nous recommends for policy hooks.[4] Recording happens in the wrapper on every occurrence, so it does not depend on Hermes logging a repeated error only once.
 - **`transform_tool_result` is never used to enforce.** Hermes skips a callback that raises there, so a guard on it fails open. It is used only to annotate a tool result, and its failures are recorded by the wrapper like any other.
 
 ### 5.6 Known limits
@@ -559,7 +559,7 @@ Initial codes:
 | `job.succeeded` | Not a failure: a scheduled job's run finished. Its `detail` names the job as `job` and, where the job has them, its counts as `input` and `output`; the job-health check reads those three keys (section 6.3) |
 | `host.missing` | An agent host on the job-health check's list wrote no heartbeat in the last 24 hours |
 | `host.heartbeat` | Not a failure: the heartbeat job on an agent host writes one every 6 hours (section 6.3) |
-| `unhandled` | Anything not in the catalog, outside a guard. Recorded by the boundary wrapper or the job wrapper, with its traceback in the log. |
+| `unhandled` | Anything not in the catalog, outside a guard. Recorded by the boundary wrapper or the job wrapper, with a sanitized diagnostic in the log. |
 
 ### 6.2 Where a failure appears
 
