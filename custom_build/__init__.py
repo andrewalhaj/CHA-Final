@@ -2,15 +2,17 @@
 
 import json
 import threading
+from pathlib import Path
 
 import psycopg
 from agent.memory_provider import MemoryProvider, spawn_context_thread
 from agent.redact import redact_sensitive_text
+from agent.runtime_cwd import resolve_agent_cwd, scope_terminal_cwd, scoped_session_cwd
 from agent.secret_scope import get_secret
 from psycopg.errors import QueryCanceled
 
 from . import failures
-from .memory import store
+from .memory import project, store
 
 SOURCE = "custom_build"
 RECALL_TIMEOUT = 6.0
@@ -36,6 +38,13 @@ def _recall_note(code: str) -> str:
 
 def _tool_error(code: str) -> str:
     return json.dumps({"error": code})
+
+
+def _project_key() -> str | None:
+    declared = scoped_session_cwd() or scope_terminal_cwd().strip()
+    # An unavailable declared workspace must not pick up the launch directory's origin.
+    cwd = Path(declared).expanduser() if declared else resolve_agent_cwd()
+    return project.key(cwd)
 
 
 class CustomBuildProvider(MemoryProvider):
@@ -113,8 +122,9 @@ class CustomBuildProvider(MemoryProvider):
 
     @failures.boundary(_tool_error)
     def _write_fact(self, body: str, *, connection) -> str:
+        scope = _project_key()
         try:
-            fact_id = store.save(connection, body)
+            fact_id = store.save(connection, body, project=scope)
         except psycopg.OperationalError:
             failures.record(connection, "db.unreachable", "failed", source=SOURCE)
             return _tool_error("db.unreachable")
@@ -135,8 +145,9 @@ class CustomBuildProvider(MemoryProvider):
 
     @failures.boundary(_recall_note)
     def _query_recall(self, query: str, *, connection) -> str:
+        scope = _project_key()
         try:
-            matches = store.recall(connection, query)
+            matches = store.recall(connection, query, project=scope)
         except QueryCanceled:
             failures.record(connection, "recall.timeout", "failed", source=SOURCE)
             return _recall_note("recall.timeout")

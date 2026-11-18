@@ -198,11 +198,11 @@ class HermesExplicitMemoryTests(unittest.TestCase):
                 )
 
             git("init", "--quiet", "--template=", str(primary))
-            git("-C", str(primary), "remote", "add", "origin", "https://git.example.invalid/team/harbor.git")
+            git("-C", str(primary), "remote", "add", "origin", "https://github.com/team/harbor.git")
             git("clone", "--quiet", "--local", "--template=", str(primary), str(alias))
-            git("-C", str(alias), "remote", "set-url", "origin", "git@git.example.invalid:team/harbor.git")
+            git("-C", str(alias), "remote", "set-url", "origin", "git@github.com:team/harbor.git")
             git("init", "--quiet", "--template=", str(other))
-            git("-C", str(other), "remote", "add", "origin", "https://git.example.invalid/team/lighthouse.git")
+            git("-C", str(other), "remote", "add", "origin", "https://github.com/team/lighthouse.git")
 
             writes = [(primary, PRIMARY_FACT), (other, OTHER_FACT), (unscoped, UNSCOPED_FACT)]
             saved, _ = self._run(scratch, "scoped-write", database_url,
