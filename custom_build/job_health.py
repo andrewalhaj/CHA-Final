@@ -4,7 +4,12 @@ import re
 
 import psycopg
 from agent.secret_scope import get_secret
-from psycopg.errors import InsufficientPrivilege
+from psycopg.errors import (
+    InsufficientPrivilege,
+    QueryCanceled,
+    UndefinedColumn,
+    UndefinedTable,
+)
 
 from . import SOURCE, _connect, failures
 
@@ -72,7 +77,9 @@ def run(ctx) -> int:
             _check(connection, roles)
         except _EventWriteFailed:
             return _exit_failure("events.write_failed")
-        except InsufficientPrivilege:
+        except (UndefinedTable, UndefinedColumn):
+            return _fail("db.behind")
+        except (InsufficientPrivilege, QueryCanceled):
             return _fail("db.query", connection)
         except psycopg.OperationalError:
             return _fail("db.unreachable")
