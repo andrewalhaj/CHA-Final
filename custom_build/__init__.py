@@ -254,8 +254,9 @@ def register(ctx) -> None:
         return
 
     from . import heartbeat
-    from .guards import fact_gate, verify_gate
+    from .guards import fact_gate, recall_gate, verify_gate
 
     heartbeat.register(ctx)
     verify_gate.register(ctx, _record_event)
     fact_gate.register(ctx, _record_event)
+    recall_gate.register(ctx, _record_event)

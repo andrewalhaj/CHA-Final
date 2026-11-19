@@ -446,6 +446,8 @@ The reminder alone is not enough, because the model can ignore it as it ignores 
 
 ### 5.3 The guards
 
+**CHA Final recall gate.** The gate ships in log mode. In enforcing mode it holds past-work and open-work replies until Hermes reports successful `memory_search` and `session_search` calls in that turn. A completed search can return zero results. An interrupted turn discards its pending receipts when Hermes reports the turn end. The current memory search uses project-scoped lexical recall.
+
 | Guard | Acts when | What it forces |
 |---|---|---|
 | Fact gate | The user asks a checkable question | At least one lookup tool in that turn. A reply that gives a vendor procedure or a diagnosis also needs a documentation lookup. |
