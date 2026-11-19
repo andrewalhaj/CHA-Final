@@ -140,9 +140,10 @@ script-only entry point, `custom_build/scripts/custom-build-job-health.py`, from
 A role is fresh when it has an `ok` `host.heartbeat` row timestamped from 24 hours before the
 database's check time through that check time, inclusive. The job records one `host.missing` row
 per missing or stale role with the checking login as the source and the expected role in the
-reason. Each completed check exits quietly. A failed lookup or event write exits with a named
-code. A rejected finding rolls back the run's findings together. The table below describes the
-broader historical jobs.
+reason. Each completed check exits quietly. A timed-out or denied lookup exits with `db.query`.
+A missing event table or column exits with `db.behind`, and a connection failure exits with
+`db.unreachable`. A rejected finding exits with `events.write_failed` and rolls back the run's
+findings together. The table below describes the broader historical jobs.
 
 | Job | Runs | What it does | Its own failure |
 |---|---|---|---|
