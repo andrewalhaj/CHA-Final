@@ -8,6 +8,7 @@ from pathlib import Path
 
 from agent.tool_dispatch_helpers import _extract_file_mutation_targets
 from hermes_constants import get_hermes_home
+from prompt_toolkit.application.current import get_app_or_none
 from tools import approval, approval_context
 from tools.file_tools_paths import _resolve_path_for_task
 
@@ -63,7 +64,9 @@ def _blocking_reason(captured_cli_callback):
         return None
     if approval_context._no_user_can_answer():
         return "this session is unattended"
-    if interactive and (callback is not None or captured_cli_callback or sys.stdin.isatty()):
+    # Hermes declines its input() fallback while prompt_toolkit owns the terminal.
+    if interactive and (callback is not None or captured_cli_callback
+                        or (sys.stdin.isatty() and get_app_or_none() is None)):
         return None
     return "no human approval channel is available"
 
