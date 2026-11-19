@@ -230,6 +230,23 @@ The files in `migrations/` are applied to `<project-ref>` in file-name order, ea
 
 ## 8. Deploying to an agent host
 
+### Current CHA Final startup check
+
+Run `hermes custom-build check` with the pinned Hermes v0.23.1 executable and the intended profile.
+Enable `custom_build`, select it as `memory.provider`, and set `CHA_FINAL_DATABASE_URL` to the restricted
+runtime login's connection string in that profile's `.env`. Exit 0 means Hermes loaded the selected
+provider and it reports availability. The runtime connection must permit writes and be out of
+recovery. A separate read-only transaction then checks the required facts, project facts and events
+statements. The check inspects read access, insert planning and the project-fact sequence privilege.
+It leaves fact rows, events and sequences untouched. Runtime smoke tests still exercise real writes
+and recalls.
+
+Exit 1 prints a failure code and records it locally. `guard.not_loaded` means the required provider
+is unselected or could not load, `config.missing` means the database setting is absent or malformed,
+`db.unreachable` means the database could not be reached, `db.behind` means a required relation or
+column is missing, and `db.query` means the runtime target is read-only or the access check was refused or timed out. If the
+ordinary plugin failed to load, Hermes itself may report that the command is unavailable.
+
 ### Disposable rollout and rollback rehearsal
 
 Use the pinned Hermes v0.23.1 environment from `.github/workflows/ci.yml`, a full Git checkout, and a
@@ -256,8 +273,7 @@ the rehearsal.
 
 ### Historical procedure from the previous repository
 
-The rest of this section describes the previous build. CHA Final does not ship `scripts/deploy.py`
-or `hermes custom-build check`.
+The rest of this section describes the previous build and its `scripts/deploy.py`.
 
 `python scripts/deploy.py <commit>`, run from a checkout on the operator's machine, applies pending migrations the way section 7 describes and does section 3's Update step for one agent host, in a fixed order, and stops at the first step that fails. `<commit>` is the full hash of a commit on `main`.
 
