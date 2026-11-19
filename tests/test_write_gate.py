@@ -22,7 +22,7 @@ def _scenario(mode):
     from hermes_cli.plugins import discover_plugins, get_plugin_manager
     from hermes_logging import setup_logging
     from model_tools import handle_function_call
-    from tools import approval_context
+    from tools import approval, approval_context
     from tools.terminal_tool import set_approval_callback
 
     home = Path(os.environ["HERMES_HOME"])
@@ -44,7 +44,7 @@ def _scenario(mode):
         if tool == "patch":
             args = {"path": str(path), "old_string": "Original.", "new_string": FIXTURE_CONTENT}
         result = json.loads(handle_function_call(
-            tool, args, task_id="write-fixture", session_id="fixture-session", turn_id="fixture-turn",
+            tool, args, task_id="write-fixture", session_id="fixture-session", turn_id="fixture-turn", tool_call_id=path.name,
         ))
         return {"changed": path.exists() and FIXTURE_CONTENT in path.read_text(encoding="utf-8"),
                 "allowed": "error" not in result}
@@ -56,6 +56,24 @@ def _scenario(mode):
     token = approval_context.set_current_session_key("fixture-session")
     set_approval_callback(answer)
     try:
+        if mode == "api":
+            set_approval_callback(None)
+            notices = []
+
+            def notify(request):
+                notices.append(request["pattern_key"])
+                approval.resolve_gateway_approval("fixture-session", "once", request_id=request["request_id"])
+
+            with patch.dict(os.environ, {"HERMES_SESSION_PLATFORM": "api_server", "HERMES_EXEC_ASK": "1",
+                                         "HERMES_INTERACTIVE": ""}):
+                offline = edit(plugin / "without-notifier.txt")
+                approval.register_gateway_notify("fixture-session", notify)
+                try:
+                    online = edit(plugin / "with-notifier.txt")
+                finally:
+                    approval.unregister_gateway_notify("fixture-session")
+            return {"offline": offline, "online": online, "notices": notices}
+
         outcomes = {"first": edit(plugin / "first.txt"), "prompts": prompts}
         if mode == "on":
             outcomes["approved"] = edit(plugin / "approved.txt")
@@ -66,6 +84,8 @@ def _scenario(mode):
             with patch.dict(os.environ, {"HERMES_INTERACTIVE": ""}):
                 outcomes["without_bridge"] = edit(plugin / "headless.txt")
             outcomes["patch_approved"] = edit(original, "patch")
+            set_approval_callback(None)
+            outcomes["interactive_marker_only"] = edit(plugin / "fake-interactive.txt")
         return outcomes
     finally:
         set_approval_callback(None)
@@ -80,7 +100,7 @@ class WriteGateTests(unittest.TestCase):
             shutil.copytree(ROOT / "custom_build", plugin)
             config = plugin / "guards" / "write_gate.toml"
             if config.exists():
-                configured = "on" if mode == "bypass" else mode
+                configured = "on" if mode in ("bypass", "api") else mode
                 text = config.read_text(encoding="utf-8")
                 config.write_text(text.replace('mode = "log"', f'mode = "{configured}"'), encoding="utf-8")
             (home / "config.yaml").write_text(json.dumps({
@@ -92,7 +112,7 @@ class WriteGateTests(unittest.TestCase):
                 env["CHA_FINAL_DATABASE_URL"] = database_url
             completed = subprocess.run(
                 [sys.executable, "-B", __file__, mode], cwd=scratch, env=env,
-                capture_output=True, text=True, timeout=30, check=False,
+                stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=30, check=False,
             )
             self.assertEqual(completed.returncode, 0, completed.stderr)
             log = (home / "logs" / "agent.log").read_text(encoding="utf-8")
@@ -100,7 +120,7 @@ class WriteGateTests(unittest.TestCase):
 
     def test_enforcement_obeys_real_approval_and_keeps_remembered_allow_rules_scoped(self):
         outcome, log = self._run("on")
-        for denied in ("first", "different_rule", "unattended_cached", "without_bridge"):
+        for denied in ("first", "different_rule", "unattended_cached", "without_bridge", "interactive_marker_only"):
             self.assertEqual(outcome[denied], {"changed": False, "allowed": False}, denied)
         for allowed in ("approved", "cached", "patch_approved"):
             self.assertEqual(outcome[allowed], {"changed": True, "allowed": True}, allowed)
@@ -109,6 +129,13 @@ class WriteGateTests(unittest.TestCase):
         self.assertIn('"code": "write_gate.denied"', log)
         self.assertNotIn(FIXTURE_CONTENT, log)
         self.assertNotIn(FIXTURE_CONTENT, repr(outcome["prompts"]))
+
+    def test_api_server_requires_live_approval_notifier(self):
+        outcome, log = self._run("api")
+        self.assertEqual(outcome["offline"], {"changed": False, "allowed": False})
+        self.assertEqual(outcome["online"], {"changed": True, "allowed": True})
+        self.assertEqual(outcome["notices"], ["plugin_rule:custom_build.write_gate.plugin"])
+        self.assertIn('"code": "write_gate.approved"', log)
 
     def test_bypass_settings_block_without_prompting(self):
         for settings in ({"mode": "off"}, {"cron_mode": "approve"}, {"single_query_mode": "approve"},
@@ -145,6 +172,6 @@ class WriteGateTests(unittest.TestCase):
 if __name__ == "__main__":
     observed = _scenario(sys.argv[1])
     for worker in threading.enumerate():
-        if worker.name == "cha-final-verify-event":
+        if worker.name == "cha-final-event":
             worker.join(timeout=5)
     print(json.dumps(observed))
