@@ -82,3 +82,16 @@ class FailureReportTests(unittest.TestCase):
             completed = self._run(directory, active)
             self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
             self.assertIn("All clear", completed.stdout)
+
+    def test_report_cannot_advance_past_an_uncommitted_recorder_insert(self):
+        from custom_build import failures
+
+        with tempfile.TemporaryDirectory() as directory, hermes.HermesExplicitMemoryTests()._database() as url:
+            with psycopg.connect(url) as writer:
+                self.assertTrue(failures.record(writer, "db.unreachable", "failed", source="fixture-source"))
+                blocked = self._run(directory, url)
+                self.assertEqual(blocked.returncode, 1, blocked.stdout + blocked.stderr)
+                self.assertEqual(blocked.stdout.strip(), "db.query")
+            summary, report = self._attachment(self._run(directory, url))
+            self.assertIn("1 event", summary)
+            self.assertIn("| db.unreachable | fixture-source | failed | 1 |", report)
