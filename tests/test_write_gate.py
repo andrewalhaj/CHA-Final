@@ -22,7 +22,9 @@ def _scenario(mode):
     from hermes_cli.plugins import discover_plugins, get_plugin_manager
     from hermes_logging import setup_logging
     from model_tools import handle_function_call
+    from prompt_toolkit.application.current import set_app
     from tools import approval, approval_context
+    from tools.approval_prompt import _ask_human
     from tools.terminal_tool import set_approval_callback
 
     home = Path(os.environ["HERMES_HOME"])
@@ -86,6 +88,14 @@ def _scenario(mode):
             outcomes["patch_approved"] = edit(original, "patch")
             set_approval_callback(None)
             outcomes["interactive_marker_only"] = edit(plugin / "fake-interactive.txt")
+            with patch.object(sys.stdin, "isatty", return_value=True), set_app(object()):
+                outcomes["pinned_owned_tty"] = _ask_human(
+                    "synthetic prompt", "disposable fixture", timeout_seconds=0, allow_permanent=True,
+                    approval_callback=None, allow_session=True, smart_denied=False,
+                )
+                outcomes["owned_tty_without_callback"] = edit(plugin / "owned-tty.txt")
+            with patch.object(sys.stdin, "isatty", return_value=True):
+                outcomes["unowned_tty"] = edit(plugin / "unowned-tty.txt")
         return outcomes
     finally:
         set_approval_callback(None)
@@ -120,9 +130,11 @@ class WriteGateTests(unittest.TestCase):
 
     def test_enforcement_obeys_real_approval_and_keeps_remembered_allow_rules_scoped(self):
         outcome, log = self._run("on")
-        for denied in ("first", "different_rule", "unattended_cached", "without_bridge", "interactive_marker_only"):
+        self.assertEqual(outcome["pinned_owned_tty"], "cancelled")
+        for denied in ("first", "different_rule", "unattended_cached", "without_bridge",
+                       "interactive_marker_only", "owned_tty_without_callback"):
             self.assertEqual(outcome[denied], {"changed": False, "allowed": False}, denied)
-        for allowed in ("approved", "cached", "patch_approved"):
+        for allowed in ("approved", "cached", "patch_approved", "unowned_tty"):
             self.assertEqual(outcome[allowed], {"changed": True, "allowed": True}, allowed)
         self.assertEqual(len(outcome["prompts"]), 4)
         self.assertIn('"code": "write_gate.always"', log)
