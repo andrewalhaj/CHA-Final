@@ -16,6 +16,10 @@ from psycopg.errors import (
 logger = logging.getLogger(__name__)
 
 REASONS = {
+    "fact_gate.armed": "The user asked a checkable question.",
+    "fact_gate.passed": "A checkable reply met its lookup requirements.",
+    "fact_gate.would_withhold": "A checkable reply lacked a required lookup.",
+    "fact_gate.withheld": "A checkable reply was withheld.",
     "config.missing": "A required memory setting is missing or invalid.",
     "db.unreachable": "The memory store could not be reached.",
     "embed.unavailable": "The local embedding service could not give a usable response.",
