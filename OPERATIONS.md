@@ -130,6 +130,20 @@ Every machine that runs the agent:
 
 **CHA Final heartbeat smoke check.** With the current plugin enabled in a disposable profile and the CHA Final migrations applied to its test store, run `hermes custom-build heartbeat`. A successful run exits quietly and appends one `host.heartbeat` row to `cha_final.events` with `result = 'ok'` and `source` equal to the database login. A failed run prints its event code and exits nonzero. The cron wrapper is `custom_build/scripts/custom-build-heartbeat.py`; the job schedule and other jobs below are the deployment reference.
 
+**CHA Final host-health smoke check.** In a disposable profile, set
+`plugins.entries.custom_build.settings.agent_hosts` to a nonempty list of distinct database login
+names. Use 1–63 ASCII letters, digits, underscores or hyphens per name. The checking login needs
+read and insert access to `cha_final.events`. Run `hermes custom-build job-health` or run its
+script-only entry point, `custom_build/scripts/custom-build-job-health.py`, from the profile's
+`scripts/` directory after copying it there.
+
+A role is fresh when it has an `ok` `host.heartbeat` row timestamped from 24 hours before the
+database's check time through that check time, inclusive. The job records one `host.missing` row
+per missing or stale role with the checking login as the source and the expected role in the
+reason. Each completed check exits quietly. A failed lookup or event write exits with a named
+code. A rejected finding rolls back the run's findings together. The table below describes the
+broader historical jobs.
+
 | Job | Runs | What it does | Its own failure |
 |---|---|---|---|
 | Retention | Daily at 03:30 GMT | Deletes `events` rows older than 90 days, except `guard.bypassed` rows; session chunks too, once their table exists. Misses worth keeping are copied into the eval set before then (ARCHITECTURE.md section 3.8). Runs inside the database: a function a migration adds, scheduled by Supabase's `pg_cron`, so no host holds a login that can delete (ARCHITECTURE.md section 4.3). `pg_cron` 1.6.4 is available on the project but not yet installed (#92). | A run records `job.succeeded` naming `retention`; a missing one is `job.missed`. A failed run rolls back, and its error is in `pg_cron`'s run history |
