@@ -121,6 +121,22 @@ def record(connection, code, result, **fields):
                 ).fetchall(), [("db.query", "failed")])
 
     @unittest.skipUnless(hermes.TEST_DATABASE_URL, "set CHA_FINAL_TEST_DATABASE_URL to disposable PostgreSQL")
+    def test_blocked_database_query_times_out_with_query_failure(self):
+        with _store() as (url, runtime_url, _), psycopg.connect(url) as locker:
+            locker.execute("lock table cha_final.events in access exclusive mode")
+            self._assert_failure(self._run(["one"], runtime_url), "db.query")
+            self.assertEqual(locker.execute("select count(*) from cha_final.events").fetchone(), (0,))
+
+    @unittest.skipUnless(hermes.TEST_DATABASE_URL, "set CHA_FINAL_TEST_DATABASE_URL to disposable PostgreSQL")
+    def test_missing_events_relation_reports_behind_instead_of_crashing(self):
+        fixture = hermes.HermesExplicitMemoryTests()
+        with tempfile.TemporaryDirectory() as folder:
+            no_schema = Path(folder) / "empty.sql"
+            no_schema.write_text("select 1", encoding="utf-8")
+            with fixture._database([no_schema]) as url:
+                self._assert_failure(self._run(["one"], url), "db.behind")
+
+    @unittest.skipUnless(hermes.TEST_DATABASE_URL, "set CHA_FINAL_TEST_DATABASE_URL to disposable PostgreSQL")
     def test_one_rejected_record_rolls_back_all_findings(self):
         with _store() as (url, runtime_url, _):
             run = self._run(["missing-role", "stale-role"], runtime_url, reject_second=True)
