@@ -128,6 +128,8 @@ Every machine that runs the agent:
 
 ## 4. Scheduled jobs
 
+**CHA Final failure report smoke check.** Run `hermes custom-build report` in a disposable profile with its test store. It reports persisted failed and degraded events since the last generated report for the connected database role. It groups counts by code, stored source and outcome, and writes a Markdown attachment through Hermes when there are findings. With no new failures it prints a one-line all-clear. A report advances its database marker after generation. Cron delivery is tracked by Hermes. The script-only wrapper is `custom_build/scripts/custom-build-report.py`.
+
 **CHA Final heartbeat smoke check.** With the current plugin enabled in a disposable profile and the CHA Final migrations applied to its test store, run `hermes custom-build heartbeat`. A successful run exits quietly and appends one `host.heartbeat` row to `cha_final.events` with `result = 'ok'` and `source` equal to the database login. A failed run prints its event code and exits nonzero. The cron wrapper is `custom_build/scripts/custom-build-heartbeat.py`; the job schedule and other jobs below are the deployment reference.
 
 | Job | Runs | What it does | Its own failure |

@@ -15,6 +15,9 @@ from psycopg.errors import (
 
 logger = logging.getLogger(__name__)
 
+# Writers share this lock so a report can take a stable checkpoint without table-maintenance rights.
+EVENT_REPORT_LOCK = 92031037
+
 REASONS = {
     "fact_gate.armed": "The user asked a checkable question.",
     "fact_gate.passed": "A checkable reply met its lookup requirements.",
@@ -34,6 +37,7 @@ REASONS = {
     "legacy.mapping_invalid": "The legacy project map could not be read or is invalid.",
     "legacy.source_invalid": "The legacy snapshot contains an unresolved project association.",
     "legacy.target_conflict": "The target already contains facts or a different legacy snapshot.",
+    "job.succeeded": "A scheduled job completed.",
     "host.heartbeat": "The agent host recorded a heartbeat.",
     "recall_gate.armed": "A past-work or open-work question requires both searches.",
     "recall_gate.passed": "Both searches completed before the reply.",
@@ -117,7 +121,10 @@ def _persist(conn, values):
     source, code, _, _ = values
     if conn is None:
         return _write_failed(source, code)
-    statement = "INSERT INTO cha_final.events (source, code, result, reason) VALUES (%s, %s, %s, %s)"
+    statement = (
+        f"WITH event_lock AS MATERIALIZED (SELECT pg_catalog.pg_advisory_xact_lock_shared({EVENT_REPORT_LOCK})) "
+        "INSERT INTO cha_final.events (source, code, result, reason) SELECT %s, %s, %s, %s FROM event_lock"
+    )
     try:
         conn.execute(statement, values)
     except (OperationalError, InFailedSqlTransaction, InsufficientPrivilege, ReadOnlySqlTransaction):

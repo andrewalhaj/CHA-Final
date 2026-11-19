@@ -3,7 +3,7 @@
 import psycopg
 from agent.secret_scope import get_secret
 
-from . import SOURCE, failures, startup_check
+from . import SOURCE, failure_report, failures, startup_check
 
 
 def _exit_failure(code: str) -> int:
@@ -48,6 +48,7 @@ def _add_commands(parser) -> None:
     commands.add_parser("check", help="Check provider and store readiness without writes").set_defaults(
         handler=startup_check.run,
     )
+    commands.add_parser("report", help="Generate the latest failure report").set_defaults(handler=failure_report.run)
 
 
 def _dispatch(args) -> int:
