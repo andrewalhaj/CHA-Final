@@ -5,10 +5,11 @@ import unittest
 from pathlib import Path
 
 import psycopg
-from psycopg.conninfo import make_conninfo
-
+import test_disposable_rollout as rollout
 import test_hermes_explicit_memory as hermes
 import test_host_heartbeat as heartbeat
+from psycopg import sql
+from psycopg.conninfo import make_conninfo
 
 PRIVATE_REASON = "private fixture event detail"
 INSERT = "insert into cha_final.events (source, code, result, reason, created_at) values (%s, %s, %s, %s, %s)"
@@ -31,14 +32,13 @@ class FailureReportTests(unittest.TestCase):
 
     def test_report_counts_only_new_failed_and_degraded_events(self):
         with tempfile.TemporaryDirectory() as directory, hermes.HermesExplicitMemoryTests()._database() as url:
-            with psycopg.connect(url) as conn:
-                with conn.cursor() as cursor:
-                    cursor.executemany(INSERT, [
-                        ("source-a", "db.unreachable", "failed", PRIVATE_REASON, "2020-01-01"),
-                        ("source-a", "db.unreachable", "failed", PRIVATE_REASON, "2020-01-02"),
-                        ("source-b", "recall.timeout", "degraded", PRIVATE_REASON, "2020-01-03"),
-                        ("source-a", "host.heartbeat", "ok", PRIVATE_REASON, "2020-01-03"),
-                    ])
+            with psycopg.connect(url) as conn, conn.cursor() as cursor:
+                cursor.executemany(INSERT, [
+                    ("source-a", "db.unreachable", "failed", PRIVATE_REASON, "2020-01-01"),
+                    ("source-a", "db.unreachable", "failed", PRIVATE_REASON, "2020-01-02"),
+                    ("source-b", "recall.timeout", "degraded", PRIVATE_REASON, "2020-01-03"),
+                    ("source-a", "host.heartbeat", "ok", PRIVATE_REASON, "2020-01-03"),
+                ])
             summary, report = self._attachment(self._run(directory, url, wrapper=True))
             self.assertIn("3 events", summary)
             self.assertIn("| db.unreachable | source-a | failed | 2 |", report)
@@ -59,11 +59,26 @@ class FailureReportTests(unittest.TestCase):
             self.assertEqual(len(clear.stdout.splitlines()), 1)
             self.assertNotIn("MEDIA:", clear.stdout)
 
-    def test_read_only_runtime_cannot_generate_or_advance_report(self):
+    def test_read_only_runtime_does_not_emit_or_advance_report(self):
         with tempfile.TemporaryDirectory() as directory, hermes.HermesExplicitMemoryTests()._database() as url:
             read_only = make_conninfo(url, options="-c default_transaction_read_only=on")
             failure = self._run(directory, read_only)
             self.assertEqual(failure.returncode, 1, failure.stderr)
-            self.assertEqual(failure.stdout.strip(), "db.query")
+            self.assertEqual(failure.stdout.strip(), "events.write_failed")
             with psycopg.connect(url) as conn:
                 self.assertEqual(conn.execute("select count(*) from cha_final.events").fetchone(), (0,))
+
+    def test_restricted_runtime_role_can_report_without_maintenance_privilege(self):
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            rollout._app_login() as (username, password),
+            hermes.HermesExplicitMemoryTests()._database() as url,
+        ):
+            with psycopg.connect(url) as owner:
+                role = sql.Identifier(username)
+                owner.execute(sql.SQL("grant usage on schema cha_final to {}").format(role))
+                owner.execute(sql.SQL("grant select, insert on cha_final.events to {}").format(role))
+            active = make_conninfo(url, user=username, password=password)
+            completed = self._run(directory, active)
+            self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+            self.assertIn("All clear", completed.stdout)
