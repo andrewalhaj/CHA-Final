@@ -15,7 +15,7 @@ from psycopg.conninfo import make_conninfo
 
 
 class HostHeartbeatTests(unittest.TestCase):
-    def _run(self, directory, database_url=None, *, wrapper=False, timeout=30):
+    def _run(self, directory, database_url=None, *, wrapper=False, timeout=30, subcommand="heartbeat"):
         home = Path(directory) / "hermes"
         installed = home / "plugins" / "custom_build"
         shutil.copytree(hermes.PLUGIN, installed, dirs_exist_ok=True, ignore=shutil.ignore_patterns("__pycache__"))
@@ -23,14 +23,14 @@ class HostHeartbeatTests(unittest.TestCase):
         if database_url is not None:
             (home / ".env").write_text(f"CHA_FINAL_DATABASE_URL={json.dumps(database_url)}\n", encoding="utf-8")
         if wrapper:
-            script = installed / "scripts" / "custom-build-heartbeat.py"
+            script = installed / "scripts" / f"custom-build-{subcommand}.py"
             self.assertTrue(script.is_file(), "the Hermes cron wrapper is missing")
             scripts = home / "scripts"
             scripts.mkdir()
             entry = shutil.copy2(script, scripts)
             command = [sys.executable, "-B", entry]
         else:
-            command = [sys.executable, "-B", "-m", "hermes_cli.main", "custom-build", "heartbeat"]
+            command = [sys.executable, "-B", "-m", "hermes_cli.main", "custom-build", subcommand]
         return subprocess.run(
             command,
             cwd=directory,
