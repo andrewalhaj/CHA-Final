@@ -14,6 +14,7 @@ from pathlib import Path
 from test_bootstrap import ROOT, _workflow
 
 NOQA = "no" + "qa"  # kept apart so the suppression ban does not match this file
+RUFF = "ruff" + ":"  # the same, for ruff's ignore/disable/file-ignore comments
 CONFIG = '[tool.ruff.lint]\nextend-select = ["BLE001", "S110"]\n'
 CODE = "x = 1\n"
 
@@ -68,9 +69,9 @@ class LintPolicyTests(unittest.TestCase):
             ("bare, no space, trailing text", {"a.py": f"x = 1  #{NOQA}  because\n"}, "git grep exited 0"),
             ("file-level ruff", {"a.py": f"# ruff: {NOQA}\nx = 1\n"}, "git grep exited 0"),
             ("file-level flake8", {"a.py": f"# flake8: {NOQA}\nx = 1\n"}, "git grep exited 0"),
-            ("ruff ignore comment", {"a.py": "x = 1  # ruff: ignore[BLE001]\n"}, "git grep exited 0"),
-            ("ruff disable comment", {"a.py": "# ruff: disable[S110]\nx = 1\n"}, "git grep exited 0"),
-            ("ruff file-ignore comment", {"a.py": "# ruff: file-ignore[E722]\nx = 1\n"}, "git grep exited 0"),
+            ("ruff ignore comment", {"a.py": f"x = 1  # {RUFF} ignore[BLE001]\n"}, "git grep exited 0"),
+            ("ruff disable comment", {"a.py": f"# {RUFF} disable[S110]\nx = 1\n"}, "git grep exited 0"),
+            ("ruff file-ignore comment", {"a.py": f"# {RUFF} file-ignore[E722]\nx = 1\n"}, "git grep exited 0"),
         ])
 
     def test_suppression_ban_fails_when_git_fails(self):
