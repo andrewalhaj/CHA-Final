@@ -3,7 +3,7 @@
 import psycopg
 from agent.secret_scope import get_secret
 
-from . import SOURCE, failures, startup_check
+from . import SOURCE, failures, job_health, startup_check
 
 
 def _exit_failure(code: str) -> int:
@@ -42,11 +42,14 @@ def _run(_args) -> int:
     return 0
 
 
-def _add_commands(parser) -> None:
+def _add_commands(parser, ctx) -> None:
     commands = parser.add_subparsers(dest="custom_build_command", required=True)
     commands.add_parser("heartbeat", help="Record this database role's heartbeat").set_defaults(handler=_run)
     commands.add_parser("check", help="Check provider and store readiness without writes").set_defaults(
         handler=startup_check.run,
+    )
+    commands.add_parser("job-health", help="Find configured roles with no recent heartbeat").set_defaults(
+        handler=lambda _args: job_health.run(ctx),
     )
 
 
@@ -55,4 +58,4 @@ def _dispatch(args) -> int:
 
 
 def register(ctx) -> None:
-    ctx.register_cli_command("custom-build", "CHA Final operator commands", _add_commands, _dispatch)
+    ctx.register_cli_command("custom-build", "CHA Final operator commands", lambda parser: _add_commands(parser, ctx), _dispatch)

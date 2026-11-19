@@ -35,6 +35,7 @@ REASONS = {
     "legacy.source_invalid": "The legacy snapshot contains an unresolved project association.",
     "legacy.target_conflict": "The target already contains facts or a different legacy snapshot.",
     "host.heartbeat": "The agent host recorded a heartbeat.",
+    "host.missing": "A configured host has no recent successful heartbeat.",
     "recall_gate.armed": "A past-work or open-work question requires both searches.",
     "recall_gate.passed": "Both searches completed before the reply.",
     "recall_gate.withheld": "A past-work reply was withheld without both searches.",
